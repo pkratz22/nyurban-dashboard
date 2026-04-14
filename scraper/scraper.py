@@ -105,6 +105,8 @@ def parse_standings(table) -> list[dict]:
             continue
 
         # Extract per-game results from the nested popup table
+        # The popup includes playoff games, but standings W/L is regular season only.
+        # Cap to wins+losses to keep only regular season games.
         games = []
         nested = name_cell.find("table")
         if nested:
@@ -117,7 +119,6 @@ def parse_standings(table) -> list[dict]:
                     if m:
                         outcome = m.group(1)
                         score_a, score_b = int(m.group(2)), int(m.group(3))
-                        # Score format is always winner-loser, so:
                         if outcome == "W":
                             pts_for, pts_against = score_a, score_b
                         else:
@@ -128,6 +129,9 @@ def parse_standings(table) -> list[dict]:
                             "pts_for": pts_for,
                             "pts_against": pts_against,
                         })
+        # Trim to regular season only (wins + losses from standings row)
+        regular_season_gp = wins + losses
+        games = games[:regular_season_gp]
 
         standings.append({
             "team": name,
