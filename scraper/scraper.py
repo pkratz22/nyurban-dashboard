@@ -205,14 +205,21 @@ def enrich_standings(standings: list[dict]) -> list[dict]:
 # ── Step 4: Parse schedule + box scores ───────────────────────────────────────
 
 def parse_result(result_text: str) -> dict:
-    m = re.search(r"([WL])\s*(\d+)-(\d+)", result_text.strip())
+    result_text = result_text.strip()
+    # Forfeit: "W F-2" or "L F-2"
+    if re.match(r"[WL]\s+F-", result_text, re.IGNORECASE):
+        outcome = result_text[0].upper()
+        return {"outcome": outcome, "team_score": None, "opp_score": None, "forfeit": True}
+    m = re.search(r"([WL])\s*(\d+)-(\d+)", result_text)
     if m:
-        return {
-            "outcome": m.group(1),
-            "team_score": int(m.group(2)),
-            "opp_score": int(m.group(3)),
-        }
-    return {"outcome": "", "team_score": None, "opp_score": None}
+        outcome = m.group(1)
+        score_a, score_b = int(m.group(2)), int(m.group(3))
+        if outcome == "W":
+            pts_for, pts_against = score_a, score_b
+        else:
+            pts_for, pts_against = score_b, score_a
+        return {"outcome": outcome, "team_score": pts_for, "opp_score": pts_against, "forfeit": False}
+    return {"outcome": "", "team_score": None, "opp_score": None, "forfeit": False}
 
 
 def parse_schedule_from_results_table(table) -> list[dict]:

@@ -394,7 +394,7 @@ function buildScheduleCard(season) {
     if (g.outcome === "W") badge = `<span class="badge badge-win">W</span>`;
     else if (g.outcome === "L") badge = `<span class="badge badge-loss">L</span>`;
     else badge = `<span class="badge badge-upcoming">TBD</span>`;
-    const score = g.team_score != null ? `${g.team_score}-${g.opp_score}` : "";
+    const score = g.forfeit ? "Forfeit" : g.team_score != null ? `${g.team_score}-${g.opp_score}` : "";
     html += `<tr>
       <td class="muted">${g.date || ""}</td>
       <td>${g.opponent || ""}</td>
@@ -600,8 +600,8 @@ function buildBoxScoresCard(season) {
     div.className = "boxscore-game";
 
     let badge = "";
-    if (game.outcome === "W") badge = `<span class="badge badge-win">W ${game.team_score}-${game.opp_score}</span>`;
-    else if (game.outcome === "L") badge = `<span class="badge badge-loss">L ${game.team_score}-${game.opp_score}</span>`;
+    if (game.outcome === "W") badge = game.forfeit ? `<span class="badge badge-win">W Forfeit</span>` : `<span class="badge badge-win">W ${game.team_score}-${game.opp_score}</span>`;
+    else if (game.outcome === "L") badge = game.forfeit ? `<span class="badge badge-loss">L Forfeit</span>` : `<span class="badge badge-loss">L ${game.team_score}-${game.opp_score}</span>`;
 
     div.innerHTML = `
       <div class="boxscore-game-header">
