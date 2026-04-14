@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NYUrban Basketball Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+ 
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #1a1f2e, #2d3748);
+      border-bottom: 3px solid #f6ad55;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    header .ball { font-size: 2.2rem; }
+    header h1 { font-size: 1.6rem; font-weight: 800; color: #f6ad55; }
+    header .subtitle { font-size: 0.85rem; color: #a0aec0; margin-top: 3px; }
+    .scraped-at { margin-left: auto; font-size: 0.72rem; color: #4a5568; }
+
+    /* ── Team tabs ── */
+    .team-tabs {
+      display: flex;
+      gap: 8px;
+      padding: 16px 32px 0;
+      border-bottom: 1px solid #2d3748;
+      background: #13171f;
+    }
+    .tab-btn {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 8px 8px 0 0;
+      background: #1a1f2e;
+      color: #718096;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.15s;
+    }
+    .tab-btn.active {
+      background: #2d3748;
+      color: #f6ad55;
+      border-bottom-color: #f6ad55;
+    }
+    .tab-btn:hover:not(.active) { color: #cbd5e0; }
+
+    /* ── Season tabs (second row) ── */
+    .season-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 10px 32px 0;
+      border-bottom: 1px solid #1e2535;
+      background: #0f1117;
+      overflow-x: auto;
+    }
+    .season-btn {
+      padding: 5px 14px;
+      border: 1px solid #2d3748;
+      border-radius: 6px 6px 0 0;
+      background: transparent;
+      color: #718096;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.12s;
+      white-space: nowrap;
+    }
+    .season-btn.active {
+      background: #1a1f2e;
+      color: #90cdf4;
+      border-color: #2d3748;
+      border-bottom-color: #90cdf4;
+    }
+    .season-btn:hover:not(.active) { color: #cbd5e0; border-color: #4a5568; }
+
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px 24px;
+      display: grid;
+      gap: 24px;
+    }
+
+    /* ── Hero stats ── */
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 14px;
+    }
+    .stat-card {
+      background: #1a1f2e;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 18px 16px;
+      text-align: center;
+    }
+    .stat-card .value { font-size: 2rem; font-weight: 800; color: #f6ad55; }
+    .stat-card .label {
+      font-size: 0.7rem; color: #718096;
+      text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: #1a1f2e;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .card-header {
+      background: #212840;
+      padding: 12px 18px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #f6ad55;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .card-header:hover { background: #263050; }
+    .card-header .icon { font-size: 1rem; }
+    .card-header .chevron {
+      margin-left: auto;
+      font-size: 0.7rem;
+      color: #4a5568;
+      transition: transform 0.2s;
+    }
+    .card.collapsed .chevron { transform: rotate(-90deg); }
+    .card-body { }
+    .card.collapsed .card-body { display: none; }
+
+    /* ── Tables ── */
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    thead th {
+      background: #171c28;
+      padding: 9px 14px;
+      text-align: left;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #718096;
+      border-bottom: 1px solid #2d3748;
+      white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid #1e2535; transition: background 0.12s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #1e2535; }
+    tbody td { padding: 9px 14px; color: #cbd5e0; white-space: nowrap; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px;
+      border-radius: 999px; font-size: 0.68rem; font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-win { background: #1c4532; color: #68d391; }
+    .badge-loss { background: #3d1515; color: #fc8181; }
+    .badge-upcoming { background: #2a2f45; color: #90cdf4; }
+
+    .highlight { color: #f6ad55; font-weight: 700; }
+    .muted { color: #4a5568; }
+
+    /* ── Two column layout ── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 750px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── Box score section ── */
+    .boxscore-list { display: grid; gap: 16px; padding: 16px; }
+    .boxscore-game {
+      background: #171c28;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .boxscore-game-header {
+      padding: 10px 14px;
+      background: #1e2535;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.82rem;
+    }
+    .boxscore-game-header .opp { font-weight: 700; color: #e2e8f0; }
+    .boxscore-game-header .meta { color: #718096; font-size: 0.75rem; }
+
+    /* ── Leaders tabs ── */
+    .leaders-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 12px 14px 0;
+      border-bottom: 1px solid #2d3748;
+    }
+    .leader-tab {
+      padding: 5px 12px;
+      border: none;
+      border-radius: 6px 6px 0 0;
+      background: transparent;
+      color: #718096;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .leader-tab.active { color: #f6ad55; border-bottom-color: #f6ad55; }
+
+    .empty-state {
+      padding: 36px; text-align: center;
+      color: #4a5568; font-size: 0.85rem;
+    }
+
+    .team-panel { display: none; }
+    .team-panel.active { display: contents; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="ball">🏀</div>
+  <div>
+    <h1 id="page-title">NYUrban Basketball</h1>
+    <div class="subtitle" id="page-subtitle">Loading...</div>
+  </div>
+  <div class="scraped-at" id="scraped-at"></div>
+</header>
+
+<div class="team-tabs" id="team-tabs"></div>
+<div class="season-tabs" id="season-tabs"></div>
+
+<div id="teams-container"></div>
+
+<script>
+let allData = null;
+let activeTeamIdx = 0;
+let activeSeasonIdx = 0;
+
+async function loadData() {
+  try {
+    const resp = await fetch("data.json");
+    if (!resp.ok) throw new Error("data.json not found — run the scraper first.");
+    allData = await resp.json();
+  } catch (e) {
+    document.getElementById("page-title").textContent = "Run the scraper first!";
+    document.getElementById("page-subtitle").textContent = e.message;
+    return;
+  }
+
+  if (allData.scraped_at) {
+    const d = new Date(allData.scraped_at);
+    document.getElementById("scraped-at").textContent = "Updated: " + d.toLocaleString();
+  }
+
+  buildTeamTabs();
+  selectTeam(0);
+}
+
+function buildTeamTabs() {
+  const tabs = document.getElementById("team-tabs");
+  tabs.innerHTML = "";
+  allData.teams.forEach((team, i) => {
+    const btn = document.createElement("button");
+    btn.className = "tab-btn" + (i === 0 ? " active" : "");
+    btn.textContent = team.team_name;
+    btn.onclick = () => selectTeam(i);
+    tabs.appendChild(btn);
+  });
+}
+
+function selectTeam(idx) {
+  activeTeamIdx = idx;
+  activeSeasonIdx = 0;
+  document.querySelectorAll(".tab-btn").forEach((b, i) => b.classList.toggle("active", i === idx));
+  buildSeasonTabs(idx);
+  renderSeason(idx, 0);
+}
+
+function buildSeasonTabs(teamIdx) {
+  const team = allData.teams[teamIdx];
+  const tabs = document.getElementById("season-tabs");
+  tabs.innerHTML = "";
+  (team.seasons || []).forEach((season, i) => {
+    const btn = document.createElement("button");
+    btn.className = "season-btn" + (i === 0 ? " active" : "");
+    const record = season.record ? season.record.wins + "-" + season.record.losses : "";
+    btn.textContent = season.season_label + (record ? "  " + record : "");
+    btn.onclick = () => {
+      activeSeasonIdx = i;
+      document.querySelectorAll(".season-btn").forEach((b, j) => b.classList.toggle("active", j === i));
+      renderSeason(teamIdx, i);
+    };
+    tabs.appendChild(btn);
+  });
+}
+
+function renderSeason(teamIdx, seasonIdx) {
+  const team = allData.teams[teamIdx];
+  const season = (team.seasons || [])[seasonIdx];
+  if (!season) return;
+
+  document.getElementById("page-title").textContent = team.team_name;
+  document.getElementById("page-subtitle").textContent =
+    season.season_label +
+    (season.division ? "  ·  " + season.division + " Division" : "") +
+    (season.record ? "  ·  " + season.record.wins + "-" + season.record.losses : "");
+
+  const container = document.getElementById("teams-container");
+  container.innerHTML = "";
+
+  const main = document.createElement("main");
+
+  // Hero stats
+  const wins = season.record?.wins ?? 0;
+  const losses = season.record?.losses ?? 0;
+  const games = (season.schedule || []).filter(g => g.outcome).length || (season.schedule || []).length;
+  const players = (season.season_totals || []).filter(p => p["no."] !== "Team").length ||
+                  getUniquePlayers(season.box_scores || []).length;
+
+  main.innerHTML += `
+    <div class="hero-stats">
+      <div class="stat-card"><div class="value">${wins}-${losses}</div><div class="label">Record</div></div>
+      <div class="stat-card"><div class="value">${games}</div><div class="label">Games</div></div>
+      <div class="stat-card"><div class="value">${players || "—"}</div><div class="label">Players</div></div>
+      <div class="stat-card"><div class="value">${season.standings?.length || "—"}</div><div class="label">Div. Teams</div></div>
+    </div>
+  `;
+
+  const twoCol = document.createElement("div");
+  twoCol.className = "two-col";
+  twoCol.appendChild(buildScheduleCard(season));
+  twoCol.appendChild(buildStandingsCard(season));
+  main.appendChild(twoCol);
+
+  if ((season.season_totals || []).length > 0 || (season.box_scores || []).length > 0) {
+    main.appendChild(buildPlayerStatsCard(season));
+  }
+
+  if (season.division_leaders && Object.keys(season.division_leaders).length > 0) {
+    main.appendChild(buildLeadersCard(season));
+  }
+
+  if ((season.box_scores || []).length > 0) {
+    main.appendChild(buildBoxScoresCard(season));
+  }
+
+  container.appendChild(main);
+}
+
+// ── Card factory (collapsible) ────────────────────────────────────────────────
+function makeCard(icon, title, startCollapsed = false) {
+  const card = document.createElement("div");
+  card.className = "card" + (startCollapsed ? " collapsed" : "");
+
+  const header = document.createElement("div");
+  header.className = "card-header";
+  header.innerHTML = `<span class="icon">${icon}</span> ${title} <span class="chevron">▼</span>`;
+  header.onclick = () => card.classList.toggle("collapsed");
+
+  const body = document.createElement("div");
+  body.className = "card-body";
+
+  card.appendChild(header);
+  card.appendChild(body);
+  return { card, body };
+}
+
+// ── Schedule ──────────────────────────────────────────────────────────────────
+function buildScheduleCard(season) {
+  const { card, body } = makeCard("📅", "Schedule & Results");
+
+  const games = season.schedule || [];
+  if (!games.length) {
+    body.innerHTML = `<div class="empty-state">No schedule data yet</div>`;
+    return card;
+  }
+
+  let html = `<table><thead><tr><th>Date</th><th>Opponent</th><th>Result</th></tr></thead><tbody>`;
+  games.forEach(g => {
+    let badge = "";
+    if (g.outcome === "W") badge = `<span class="badge badge-win">W</span>`;
+    else if (g.outcome === "L") badge = `<span class="badge badge-loss">L</span>`;
+    else badge = `<span class="badge badge-upcoming">TBD</span>`;
+    const score = g.team_score != null ? `${g.team_score}-${g.opp_score}` : "";
+    html += `<tr>
+      <td class="muted">${g.date || ""}</td>
+      <td>${g.opponent || ""}</td>
+      <td>${badge} ${score}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  body.innerHTML = html;
+  return card;
+}
+
+// ── Standings ─────────────────────────────────────────────────────────────────
+function buildStandingsCard(season) {
+  const { card, body } = makeCard("🏆", "Division Standings");
+
+  const standings = season.standings || [];
+  if (!standings.length) {
+    body.innerHTML = `<div class="empty-state">No standings data yet</div>`;
+    return card;
+  }
+
+  const fmt = (v, dec = 1) => v == null ? "—" : Number(v).toFixed(dec);
+
+  let html = `<div class="table-scroll"><table><thead><tr>
+    <th>#</th><th>Team</th><th>W</th><th>L</th><th>Pct</th>
+    <th title="Points Per Game">PPG</th>
+    <th title="Opponent Points Per Game">Opp PPG</th>
+    <th title="Point Differential per game">Pt Diff</th>
+    <th title="Strength of Schedule (avg opponent SRS, in points)">SOS</th>
+    <th title="Simple Rating System = Pt Diff + SOS (iterative, per Basketball Reference)">SRS</th>
+  </tr></thead><tbody>`;
+
+  standings.forEach((s, i) => {
+    const isMyTeam = s.team === season.team_name;
+    const diff = s.pt_diff;
+    const diffColor = diff == null ? "" : diff > 0 ? ' style="color:#68d391"' : diff < 0 ? ' style="color:#fc8181"' : "";
+    html += `<tr${isMyTeam ? ' style="background:#1e2a1e"' : ""}>
+      <td class="muted">${i + 1}</td>
+      <td style="white-space:normal;min-width:100px"${isMyTeam ? ' class="highlight"' : ""}>${s.team}</td>
+      <td>${s.wins}</td>
+      <td>${s.losses}</td>
+      <td class="muted">${s.pct}</td>
+      <td>${fmt(s.ppg)}</td>
+      <td>${fmt(s.opp_ppg)}</td>
+      <td${diffColor}>${diff != null ? (diff > 0 ? "+" : "") + fmt(diff) : "—"}</td>
+      <td class="muted">${fmt(s.sos)}</td>
+      <td>${fmt(s.srs)}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>`;
+  body.innerHTML = html;
+  return card;
+}
+
+// ── Player Stats ──────────────────────────────────────────────────────────────
+function buildPlayerStatsCard(season) {
+  const { card, body } = makeCard("📊", "Season Player Stats");
+
+  let players = (season.season_totals || []).filter(p => p["no."] !== "Team" && p["no."] !== "");
+  if (!players.length && (season.box_scores || []).length > 0) {
+    players = aggregateFromBoxScores(season.box_scores);
+  }
+  if (!players.length) {
+    body.innerHTML = `<div class="empty-state">No player stats yet</div>`;
+    return card;
+  }
+
+  const normalized = players.map(p => ({
+    no: p["no."] || p["no"] || "",
+    name: p["name"] || "",
+    gp: p["gp"] || 0,
+    fg: p["fg"] || 0,
+    threes: p["3pts"] || p["3pt"] || 0,
+    ft: p["ft"] || 0,
+    total: p["tot."] || p["total"] || 0,
+    avg: p["avg."] || p["avg"] || (p["tot."] && p["gp"] ? (p["tot."] / p["gp"]).toFixed(1) : "—"),
+  })).filter(p => p.no !== "Team").sort((a, b) => (b.total || 0) - (a.total || 0));
+
+  let html = `<table><thead><tr><th>#</th><th>Name</th><th>GP</th><th>FG</th><th>3PT</th><th>FT</th><th>PTS</th><th>PPG</th></tr></thead><tbody>`;
+  normalized.forEach(p => {
+    html += `<tr>
+      <td class="muted">${p.no}</td>
+      <td>${p.name || "—"}</td>
+      <td class="muted">${p.gp}</td>
+      <td>${p.fg}</td>
+      <td>${p.threes}</td>
+      <td>${p.ft}</td>
+      <td class="highlight">${p.total}</td>
+      <td>${p.avg}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  body.innerHTML = html;
+  return card;
+}
+
+// ── Division Leaders ──────────────────────────────────────────────────────────
+function buildLeadersCard(season) {
+  const { card, body } = makeCard("⭐", "Division Leaders");
+
+  const leaders = season.division_leaders || {};
+  const categories = {
+    total_points: "Total Points",
+    scoring_avg: "Points Per Game",
+    three_pointers: "3-Pointers",
+    free_throws: "Free Throws",
+  };
+
+  // Collect all unique team names across all categories
+  const allTeams = [...new Set(
+    Object.values(leaders).flat().map(r => r["team"]).filter(Boolean)
+  )].sort();
+
+  // Filter bar
+  const filterBar = document.createElement("div");
+  filterBar.style.cssText = "padding:10px 14px 0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;";
+  filterBar.innerHTML = `<span style="font-size:0.72rem;color:#718096;text-transform:uppercase;letter-spacing:.05em;">Filter by team</span>`;
+
+  const select = document.createElement("select");
+  select.style.cssText = "background:#171c28;color:#e2e8f0;border:1px solid #2d3748;border-radius:6px;padding:4px 10px;font-size:0.8rem;cursor:pointer;";
+  select.innerHTML = `<option value="">All teams</option>` +
+    allTeams.map(t => `<option value="${t}"${t === season.team_name ? " selected" : ""}>${t}</option>`).join("");
+  filterBar.appendChild(select);
+
+  const tabsDiv = document.createElement("div");
+  tabsDiv.className = "leaders-tabs";
+  const contentDiv = document.createElement("div");
+
+  // Build panels, storing rows for live filtering
+  const panels = {};
+  let first = true;
+  Object.entries(categories).forEach(([key, label]) => {
+    if (!leaders[key] || !leaders[key].length) return;
+    const panelId = `leader-panel-${key}-${Math.random().toString(36).slice(2)}`;
+
+    const tab = document.createElement("button");
+    tab.className = "leader-tab" + (first ? " active" : "");
+    tab.textContent = label;
+    tab.onclick = () => {
+      card.querySelectorAll(".leader-tab").forEach(t => t.classList.remove("active"));
+      card.querySelectorAll(".leader-panel").forEach(p => p.style.display = "none");
+      tab.classList.add("active");
+      document.getElementById(panelId).style.display = "";
+    };
+    tabsDiv.appendChild(tab);
+
+    const panel = document.createElement("div");
+    panel.className = "leader-panel";
+    panel.id = panelId;
+    panel.style.display = first ? "" : "none";
+    contentDiv.appendChild(panel);
+
+    panels[key] = { panel, rows: leaders[key] };
+    first = false;
+  });
+
+  function renderPanels(filterTeam) {
+    Object.entries(panels).forEach(([key, { panel, rows }]) => {
+      const filtered = filterTeam ? rows.filter(r => r["team"] === filterTeam) : rows;
+      const keys = [...new Set(rows.flatMap(r => Object.keys(r)))];
+      let html = `<table><thead><tr>${keys.map(k => `<th>${k}</th>`).join("")}</tr></thead><tbody>`;
+      if (!filtered.length) {
+        html += `<tr><td colspan="${keys.length}" style="padding:20px;text-align:center;color:#4a5568">No entries for this team</td></tr>`;
+      } else {
+        filtered.forEach(row => {
+          const isMyTeam = row["team"] === season.team_name;
+          html += `<tr${isMyTeam ? ' style="background:#1e2a1e"' : ""}>`;
+          keys.forEach(k => {
+            html += `<td${isMyTeam && k === "team" ? ' class="highlight"' : ""}>${row[k] ?? ""}</td>`;
+          });
+          html += `</tr>`;
+        });
+      }
+      html += `</tbody></table>`;
+      panel.innerHTML = html;
+    });
+  }
+
+  select.onchange = () => renderPanels(select.value);
+  renderPanels(season.team_name); // default: show only my team
+
+  body.appendChild(filterBar);
+  body.appendChild(tabsDiv);
+  body.appendChild(contentDiv);
+  return card;
+}
+
+// ── Box Scores ────────────────────────────────────────────────────────────────
+function buildBoxScoresCard(season) {
+  const { card, body } = makeCard("📋", "Game Box Scores", true); // start collapsed
+
+  const games = season.box_scores || [];
+  if (!games.length) {
+    body.innerHTML = `<div class="empty-state">No box scores yet</div>`;
+    return card;
+  }
+
+  const list = document.createElement("div");
+  list.className = "boxscore-list";
+
+  games.forEach(game => {
+    const div = document.createElement("div");
+    div.className = "boxscore-game";
+
+    let badge = "";
+    if (game.outcome === "W") badge = `<span class="badge badge-win">W ${game.team_score}-${game.opp_score}</span>`;
+    else if (game.outcome === "L") badge = `<span class="badge badge-loss">L ${game.team_score}-${game.opp_score}</span>`;
+
+    div.innerHTML = `
+      <div class="boxscore-game-header">
+        <div>
+          <span class="opp">vs ${game.opponent}</span>
+          <span class="meta"> · ${game.date} · ${game.gym || ""}</span>
+        </div>
+        <div>${badge}</div>
+      </div>
+    `;
+
+    const players = (game.players || []).filter(p => p["no."] !== "Team");
+    if (players.length) {
+      let tbl = `<table><thead><tr><th>#</th><th>Name</th><th>FG</th><th>3PT</th><th>FT</th><th>PTS</th></tr></thead><tbody>`;
+      players.forEach(p => {
+        tbl += `<tr>
+          <td class="muted">${p["no."] || ""}</td>
+          <td>${p["name"] || "—"}</td>
+          <td>${p["fg"] ?? ""}</td>
+          <td>${p["3pts"] ?? ""}</td>
+          <td>${p["ft"] ?? ""}</td>
+          <td class="highlight">${p["total"] ?? ""}</td>
+        </tr>`;
+      });
+      tbl += `</tbody></table>`;
+      div.innerHTML += tbl;
+    }
+
+    list.appendChild(div);
+  });
+
+  body.appendChild(list);
+  return card;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function getUniquePlayers(boxScores) {
+  const seen = new Set();
+  boxScores.forEach(g => (g.players || []).forEach(p => {
+    if (p["no."] && p["no."] !== "Team") seen.add(p["no."]);
+  }));
+  return [...seen];
+}
+
+function aggregateFromBoxScores(boxScores) {
+  const totals = {};
+  boxScores.forEach(game => {
+    (game.players || []).forEach(p => {
+      const key = p["no."] || "?";
+      if (key === "Team" || !key) return;
+      if (!totals[key]) totals[key] = { "no.": key, name: p["name"] || "", gp: 0, fg: 0, "3pts": 0, ft: 0, "tot.": 0 };
+      totals[key].gp++;
+      totals[key].fg += (p["fg"] || 0);
+      totals[key]["3pts"] += (p["3pts"] || 0);
+      totals[key].ft += (p["ft"] || 0);
+      totals[key]["tot."] += (p["total"] || 0);
+    });
+  });
+  return Object.values(totals).sort((a, b) => b["tot."] - a["tot."]);
+}
+
+loadData();
+</script>
+</body>
+</html>
