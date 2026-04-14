@@ -29,7 +29,10 @@ jobs:
         env:
           NYURBAN_USERNAME: ${{ secrets.NYURBAN_USERNAME }}
           NYURBAN_PASSWORD: ${{ secrets.NYURBAN_PASSWORD }}
-        run: python scraper/scraper.py
+        run: |
+          python scraper/scraper.py
+          echo "--- web/ contents after scrape ---"
+          ls -la web/
 
       - name: Deploy to GitHub Pages
         run: |
