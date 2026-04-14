@@ -25,7 +25,7 @@ TEAM_LIST_URL = f"{BASE_URL}/waiver-team-listing/"
 USERNAME = os.environ["NYURBAN_USERNAME"]
 PASSWORD = os.environ["NYURBAN_PASSWORD"]
 
-OUTPUT_FILE = "../web/data.json"
+OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "../web/data.json")
 
 
 # ── Step 1: Login ─────────────────────────────────────────────────────────────
