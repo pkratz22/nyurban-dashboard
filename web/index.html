@@ -418,8 +418,11 @@ function buildStandingsCard(season) {
 
   const fmt = (v, dec = 1) => v == null ? "—" : Number(v).toFixed(dec);
 
-  let html = `<div class="table-scroll"><table><thead><tr>
-    <th>#</th><th>Team</th><th>W</th><th>L</th><th>Pct</th>
+  const wrap = document.createElement("div");
+  wrap.className = "table-scroll";
+
+  let html = `<table><thead><tr>
+    <th></th><th>#</th><th>Team</th><th>W</th><th>L</th><th>Pct</th>
     <th title="Points Per Game">PPG</th>
     <th title="Opponent Points Per Game">Opp PPG</th>
     <th title="Point Differential per game">Pt Diff</th>
@@ -431,9 +434,12 @@ function buildStandingsCard(season) {
     const isMyTeam = s.team === season.team_name;
     const diff = s.pt_diff;
     const diffColor = diff == null ? "" : diff > 0 ? ' style="color:#68d391"' : diff < 0 ? ' style="color:#fc8181"' : "";
-    html += `<tr${isMyTeam ? ' style="background:#1e2a1e"' : ""}>
+    const rowId = `standing-games-${i}`;
+
+    html += `<tr class="standing-row${isMyTeam ? " my-team-row" : ""}" data-target="${rowId}" style="${isMyTeam ? "background:#1e2a1e;" : ""}cursor:pointer">
+      <td class="muted" style="font-size:0.65rem">▶</td>
       <td class="muted">${i + 1}</td>
-      <td style="white-space:normal;min-width:100px"${isMyTeam ? ' class="highlight"' : ""}>${s.team}</td>
+      <td${isMyTeam ? ' class="highlight"' : ""}>${s.team}</td>
       <td>${s.wins}</td>
       <td>${s.losses}</td>
       <td class="muted">${s.pct}</td>
@@ -443,9 +449,45 @@ function buildStandingsCard(season) {
       <td class="muted">${fmt(s.sos)}</td>
       <td>${fmt(s.srs)}</td>
     </tr>`;
+
+    // Expandable game log row
+    const games = s.games || [];
+    let gameRows = "";
+    games.forEach(g => {
+      const win = g.outcome === "W";
+      const badge = win
+        ? `<span class="badge badge-win">W</span>`
+        : `<span class="badge badge-loss">L</span>`;
+      const score = g.pts_for != null ? `${g.pts_for}-${g.pts_against}` : "Forfeit";
+      gameRows += `<tr style="background:#13171f">
+        <td></td><td></td>
+        <td class="muted" style="padding-left:28px;font-size:0.8rem">${g.opponent}</td>
+        <td colspan="8" style="font-size:0.8rem">${badge} ${score}</td>
+      </tr>`;
+    });
+
+    html += `<tr id="${rowId}" style="display:none">${
+      games.length
+        ? `<td colspan="11" style="padding:0"><table style="width:100%">${gameRows}</table></td>`
+        : `<td colspan="11" class="empty-state">No game data</td>`
+    }</tr>`;
   });
-  html += `</tbody></table></div>`;
-  body.innerHTML = html;
+
+  html += `</tbody></table>`;
+  wrap.innerHTML = html;
+  body.appendChild(wrap);
+
+  // Toggle expand on row click
+  wrap.querySelectorAll(".standing-row").forEach(row => {
+    row.addEventListener("click", () => {
+      const target = document.getElementById(row.dataset.target);
+      const chevron = row.querySelector("td:first-child");
+      const open = target.style.display !== "none";
+      target.style.display = open ? "none" : "";
+      chevron.textContent = open ? "▶" : "▼";
+    });
+  });
+
   return card;
 }
 
