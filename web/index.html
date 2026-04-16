@@ -418,76 +418,169 @@ function buildStandingsCard(season) {
 
   const fmt = (v, dec = 1) => v == null ? "—" : Number(v).toFixed(dec);
 
+  // Column definitions: label, key fn, default sort direction (true = desc)
+  const cols = [
+    { label: "",        key: null,                  desc: false,  title: "" },
+    { label: "#",       key: (s,i) => i,            desc: false,  title: "" },
+    { label: "Team",    key: s => s.team,            desc: false,  title: "" },
+    { label: "W",       key: s => s.wins,            desc: true,   title: "" },
+    { label: "L",       key: s => s.losses,          desc: false,  title: "" },
+    { label: "Pct",     key: s => parseFloat(s.pct), desc: true,   title: "" },
+    { label: "PPG",     key: s => s.ppg,             desc: true,   title: "Points Per Game" },
+    { label: "Opp PPG", key: s => s.opp_ppg,         desc: false,  title: "Opponent Points Per Game" },
+    { label: "Pt Diff", key: s => s.pt_diff,         desc: true,   title: "Point Differential per game" },
+    { label: "SOS",     key: s => s.sos,             desc: true,   title: "Strength of Schedule (avg opponent SRS)" },
+    { label: "SRS",     key: s => s.srs,             desc: true,   title: "Simple Rating System = Pt Diff + SOS" },
+  ];
+
+  let sortColIdx = 1;   // default: rank (#)
+  let sortDesc = false;
+
   const wrap = document.createElement("div");
   wrap.className = "table-scroll";
 
-  let html = `<table><thead><tr>
-    <th></th><th>#</th><th>Team</th><th>W</th><th>L</th><th>Pct</th>
-    <th title="Points Per Game">PPG</th>
-    <th title="Opponent Points Per Game">Opp PPG</th>
-    <th title="Point Differential per game">Pt Diff</th>
-    <th title="Strength of Schedule (avg opponent SRS, in points)">SOS</th>
-    <th title="Simple Rating System = Pt Diff + SOS (iterative, per Basketball Reference)">SRS</th>
-  </tr></thead><tbody>`;
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
 
-  standings.forEach((s, i) => {
-    const isMyTeam = s.team === season.team_name;
-    const diff = s.pt_diff;
-    const diffColor = diff == null ? "" : diff > 0 ? ' style="color:#68d391"' : diff < 0 ? ' style="color:#fc8181"' : "";
-    const rowId = `standing-games-${i}`;
-
-    html += `<tr class="standing-row${isMyTeam ? " my-team-row" : ""}" data-target="${rowId}" style="${isMyTeam ? "background:#1e2a1e;" : ""}cursor:pointer">
-      <td class="muted" style="font-size:0.65rem">▶</td>
-      <td class="muted">${i + 1}</td>
-      <td${isMyTeam ? ' class="highlight"' : ""}>${s.team}</td>
-      <td>${s.wins}</td>
-      <td>${s.losses}</td>
-      <td class="muted">${s.pct}</td>
-      <td>${fmt(s.ppg)}</td>
-      <td>${fmt(s.opp_ppg)}</td>
-      <td${diffColor}>${diff != null ? (diff > 0 ? "+" : "") + fmt(diff) : "—"}</td>
-      <td class="muted">${fmt(s.sos)}</td>
-      <td>${fmt(s.srs)}</td>
-    </tr>`;
-
-    // Expandable game log row
-    const games = s.games || [];
-    let gameRows = "";
-    games.forEach(g => {
-      const win = g.outcome === "W";
-      const badge = win
-        ? `<span class="badge badge-win">W</span>`
-        : `<span class="badge badge-loss">L</span>`;
-      const score = g.pts_for != null ? `${g.pts_for}-${g.pts_against}` : "Forfeit";
-      gameRows += `<tr style="background:#13171f">
-        <td></td><td></td>
-        <td class="muted" style="padding-left:28px;font-size:0.8rem">${g.opponent}</td>
-        <td colspan="8" style="font-size:0.8rem">${badge} ${score}</td>
-      </tr>`;
-    });
-
-    html += `<tr id="${rowId}" style="display:none">${
-      games.length
-        ? `<td colspan="11" style="padding:0"><table style="width:100%">${gameRows}</table></td>`
-        : `<td colspan="11" class="empty-state">No game data</td>`
-    }</tr>`;
-  });
-
-  html += `</tbody></table>`;
-  wrap.innerHTML = html;
+  const tbody = document.createElement("tbody");
+  table.appendChild(tbody);
+  wrap.appendChild(table);
   body.appendChild(wrap);
 
-  // Toggle expand on row click
-  wrap.querySelectorAll(".standing-row").forEach(row => {
-    row.addEventListener("click", () => {
-      const target = document.getElementById(row.dataset.target);
-      const chevron = row.querySelector("td:first-child");
-      const open = target.style.display !== "none";
-      target.style.display = open ? "none" : "";
-      chevron.textContent = open ? "▶" : "▼";
-    });
+  // Build header
+  cols.forEach((col, ci) => {
+    const th = document.createElement("th");
+    th.textContent = col.label;
+    if (col.title) th.title = col.title;
+    if (col.key) {
+      th.style.cursor = "pointer";
+      th.style.userSelect = "none";
+      th.addEventListener("click", () => {
+        if (sortColIdx === ci) {
+          sortDesc = !sortDesc;
+        } else {
+          sortColIdx = ci;
+          sortDesc = col.desc;
+        }
+        renderRows();
+      });
+    }
+    headerRow.appendChild(th);
   });
 
+  function renderRows() {
+    // Update header indicators
+    headerRow.querySelectorAll("th").forEach((th, ci) => {
+      const base = cols[ci].label;
+      if (ci === sortColIdx && cols[ci].key) {
+        th.textContent = base + (sortDesc ? " ▼" : " ▲");
+      } else {
+        th.textContent = base;
+        if (cols[ci].title) th.title = cols[ci].title;
+      }
+    });
+
+    // Sort — keep original index for rank column
+    const indexed = standings.map((s, i) => ({ s, i }));
+    const col = cols[sortColIdx];
+    if (col.key) {
+      indexed.sort((a, b) => {
+        const va = col.key(a.s, a.i) ?? (sortDesc ? -Infinity : Infinity);
+        const vb = col.key(b.s, b.i) ?? (sortDesc ? -Infinity : Infinity);
+        if (typeof va === "string") return sortDesc ? vb.localeCompare(va) : va.localeCompare(vb);
+        return sortDesc ? vb - va : va - vb;
+      });
+    }
+
+    tbody.innerHTML = "";
+    indexed.forEach(({ s, i }) => {
+      const isMyTeam = s.team === season.team_name;
+      const diff = s.pt_diff;
+      const rowId = `sg-${card.dataset.uid}-${i}`;
+
+      const tr = document.createElement("tr");
+      tr.className = "standing-row" + (isMyTeam ? " my-team-row" : "");
+      tr.dataset.target = rowId;
+      tr.style.cursor = "pointer";
+      if (isMyTeam) tr.style.background = "#1e2a1e";
+
+      const diffColor = diff == null ? "" : diff > 0 ? "#68d391" : diff < 0 ? "#fc8181" : "";
+
+      const cells = [
+        { html: "▶", cls: "muted", style: "font-size:0.65rem" },
+        { html: i + 1, cls: "muted" },
+        { html: s.team, cls: isMyTeam ? "highlight" : "" },
+        { html: s.wins },
+        { html: s.losses },
+        { html: s.pct, cls: "muted" },
+        { html: fmt(s.ppg) },
+        { html: fmt(s.opp_ppg) },
+        { html: diff != null ? (diff > 0 ? "+" : "") + fmt(diff) : "—", style: diffColor ? `color:${diffColor}` : "" },
+        { html: fmt(s.sos), cls: "muted" },
+        { html: fmt(s.srs) },
+      ];
+
+      cells.forEach(c => {
+        const td = document.createElement("td");
+        td.innerHTML = c.html;
+        if (c.cls) td.className = c.cls;
+        if (c.style) td.style.cssText = c.style;
+        tr.appendChild(td);
+      });
+
+      tr.addEventListener("click", () => {
+        const target = document.getElementById(rowId);
+        const chevron = tr.querySelector("td:first-child");
+        const open = target.style.display !== "none";
+        target.style.display = open ? "none" : "";
+        chevron.textContent = open ? "▶" : "▼";
+      });
+
+      tbody.appendChild(tr);
+
+      // Expandable game log
+      const expandTr = document.createElement("tr");
+      expandTr.id = rowId;
+      expandTr.style.display = "none";
+
+      const games = s.games || [];
+      if (games.length) {
+        const td = document.createElement("td");
+        td.colSpan = 11;
+        td.style.padding = "0";
+        let gameHtml = `<table style="width:100%">`;
+        games.forEach(g => {
+          const badge = g.outcome === "W"
+            ? `<span class="badge badge-win">W</span>`
+            : `<span class="badge badge-loss">L</span>`;
+          const score = g.pts_for != null ? `${g.pts_for}-${g.pts_against}` : "Forfeit";
+          gameHtml += `<tr style="background:#13171f">
+            <td></td><td></td>
+            <td class="muted" style="padding-left:28px;font-size:0.8rem;white-space:normal">${g.opponent}</td>
+            <td colspan="8" style="font-size:0.8rem">${badge} ${score}</td>
+          </tr>`;
+        });
+        gameHtml += `</table>`;
+        td.innerHTML = gameHtml;
+        expandTr.appendChild(td);
+      } else {
+        const td = document.createElement("td");
+        td.colSpan = 11;
+        td.className = "empty-state";
+        td.textContent = "No game data";
+        expandTr.appendChild(td);
+      }
+
+      tbody.appendChild(expandTr);
+    });
+  }
+
+  // Give card a unique id for row id namespacing
+  card.dataset.uid = Math.random().toString(36).slice(2);
+  renderRows();
   return card;
 }
 
