@@ -225,8 +225,10 @@ def parse_result(result_text: str) -> dict:
 def parse_schedule_from_results_table(table) -> list[dict]:
     """
     Parse the schedule table: Date | Location | Time | Opponent | Results
-    The opponent cell contains popup HTML — extract just the team name.
+    The opponent and location cells contain popup HTML — extract just the key info.
     """
+    from urllib.parse import urlparse, parse_qs, unquote_plus
+
     schedule = []
     rows = table.find_all("tr", recursive=False)
     for row in rows[1:]:  # skip header
@@ -234,8 +236,6 @@ def parse_schedule_from_results_table(table) -> list[dict]:
         if len(cells) < 5:
             continue
         date = cells[0].get_text(strip=True)
-        # Location: first text node before the popup
-        loc_text = cells[1].get_text(" ", strip=True).split("arrow")[0].strip()
         time = cells[2].get_text(strip=True)
         # Opponent: first text before "arrow"
         opp_text = cells[3].get_text(" ", strip=True).split("arrow")[0].strip()
@@ -244,11 +244,27 @@ def parse_schedule_from_results_table(table) -> list[dict]:
         if not date or opp_text in ("*** No Game This Week", ""):
             continue
 
+        # Location: code, gym name, address from popup
+        loc_cell = cells[1]
+        a_tag = loc_cell.find("a")
+        loc_code = a_tag.get_text(strip=True) if a_tag else loc_cell.get_text(" ", strip=True).split("arrow")[0].strip()
+        gym_name = ""
+        gym_address = ""
+        if a_tag and a_tag.get("href"):
+            qs = parse_qs(urlparse(a_tag["href"]).query)
+            gym_address = unquote_plus(qs.get("address", [""])[0])
+        popup = loc_cell.find(id="popup")
+        if popup:
+            texts = [t.strip() for t in popup.stripped_strings]
+            gym_name = next((t for t in texts if t and t != "arrow"), "")
+
         parsed = parse_result(result_raw)
         schedule.append({
             "date": date,
-            "location": loc_text,
             "time": time,
+            "location": loc_code,
+            "gym_name": gym_name,
+            "gym_address": gym_address,
             "opponent": opp_text,
             "result": result_raw,
             **parsed,

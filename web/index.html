@@ -388,16 +388,31 @@ function buildScheduleCard(season) {
     return card;
   }
 
-  let html = `<table><thead><tr><th>Date</th><th>Time</th><th>Opponent</th><th>Result</th></tr></thead><tbody>`;
+  let html = `<table><thead><tr><th>Date</th><th>Time</th><th>Location</th><th>Opponent</th><th>Result</th></tr></thead><tbody>`;
   games.forEach(g => {
     let badge = "";
     if (g.outcome === "W") badge = `<span class="badge badge-win">W</span>`;
     else if (g.outcome === "L") badge = `<span class="badge badge-loss">L</span>`;
     else badge = `<span class="badge badge-upcoming">TBD</span>`;
     const score = g.forfeit ? "Forfeit" : g.team_score != null ? `${g.team_score}-${g.opp_score}` : "";
+
+    // Build gym cell: linked to Google Maps if address available
+    let gymCell = g.location || "";
+    if (g.gym_address) {
+      const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(g.gym_address + ", New York, NY")}`;
+      const label = g.gym_name || g.location || g.gym_address;
+      gymCell = `<a href="${mapsUrl}" target="_blank" rel="noopener"
+        title="${g.gym_name ? g.gym_name + ' · ' : ''}${g.gym_address}"
+        style="color:#90cdf4;text-decoration:none;border-bottom:1px dotted #4a5568"
+        >${label}</a>`;
+    } else if (g.gym_name) {
+      gymCell = `<span title="${g.gym_name}">${g.location || g.gym_name}</span>`;
+    }
+
     html += `<tr>
       <td class="muted">${g.date || ""}</td>
       <td class="muted">${g.time || ""}</td>
+      <td>${gymCell}</td>
       <td>${g.opponent || ""}</td>
       <td>${badge} ${score}</td>
     </tr>`;
