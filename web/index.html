@@ -339,11 +339,8 @@ function renderSeason(teamIdx, seasonIdx) {
     </div>
   `;
 
-  const twoCol = document.createElement("div");
-  twoCol.className = "two-col";
-  twoCol.appendChild(buildScheduleCard(season));
-  twoCol.appendChild(buildStandingsCard(season));
-  main.appendChild(twoCol);
+  main.appendChild(buildScheduleCard(season));
+  main.appendChild(buildStandingsCard(season));
 
   if ((season.season_totals || []).length > 0 || (season.box_scores || []).length > 0) {
     main.appendChild(buildPlayerStatsCard(season));
@@ -417,8 +414,7 @@ function buildScheduleCard(season) {
       <td>${badge} ${score}</td>
     </tr>`;
   });
-  html += `</tbody></table>`;
-  body.innerHTML = html;
+  body.innerHTML = `<div class="table-scroll">${html}</tbody></table></div>`;
   return card;
 }
 
