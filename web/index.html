@@ -634,7 +634,7 @@ function buildPlayerStatsCard(season) {
     </tr>`;
   });
   html += `</tbody></table>`;
-  body.innerHTML = html;
+  body.innerHTML = `<div class="table-scroll">${html}</div>`;
   return card;
 }
 
@@ -716,7 +716,7 @@ function buildLeadersCard(season) {
         });
       }
       html += `</tbody></table>`;
-      panel.innerHTML = html;
+      panel.innerHTML = `<div class="table-scroll">${html}</div>`;
     });
   }
 
@@ -774,7 +774,7 @@ function buildBoxScoresCard(season) {
         </tr>`;
       });
       tbl += `</tbody></table>`;
-      div.innerHTML += tbl;
+      div.innerHTML += `<div class="table-scroll">${tbl}</div>`;
     }
 
     list.appendChild(div);
