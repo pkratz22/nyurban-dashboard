@@ -617,24 +617,79 @@ function buildPlayerStatsCard(season) {
     threes: p["3pts"] || p["3pt"] || 0,
     ft: p["ft"] || 0,
     total: p["tot."] || p["total"] || 0,
-    avg: p["avg."] || p["avg"] || (p["tot."] && p["gp"] ? (p["tot."] / p["gp"]).toFixed(1) : "—"),
-  })).filter(p => p.no !== "Team").sort((a, b) => (b.total || 0) - (a.total || 0));
+    avg: parseFloat(p["avg."] || p["avg"]) || (p["tot."] && p["gp"] ? p["tot."] / p["gp"] : 0),
+  })).filter(p => p.no !== "Team");
 
-  let html = `<table><thead><tr><th>#</th><th>Name</th><th>GP</th><th>FG</th><th>3PT</th><th>FT</th><th>PTS</th><th>PPG</th></tr></thead><tbody>`;
-  normalized.forEach(p => {
-    html += `<tr>
-      <td class="muted">${p.no}</td>
-      <td>${p.name || "—"}</td>
-      <td class="muted">${p.gp}</td>
-      <td>${p.fg}</td>
-      <td>${p.threes}</td>
-      <td>${p.ft}</td>
-      <td class="highlight">${p.total}</td>
-      <td>${p.avg}</td>
-    </tr>`;
+  const cols = [
+    { label: "#",   key: p => p.no,     desc: false },
+    { label: "Name",key: p => p.name,   desc: false },
+    { label: "GP",  key: p => p.gp,     desc: true  },
+    { label: "FG",  key: p => p.fg,     desc: true  },
+    { label: "3PT", key: p => p.threes, desc: true  },
+    { label: "FT",  key: p => p.ft,     desc: true  },
+    { label: "PTS", key: p => p.total,  desc: true  },
+    { label: "PPG", key: p => p.avg,    desc: true  },
+  ];
+
+  let sortColIdx = 6; // default: PTS
+  let sortDesc = true;
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-scroll";
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  body.appendChild(wrap);
+
+  cols.forEach((col, ci) => {
+    const th = document.createElement("th");
+    th.textContent = col.label;
+    th.style.cursor = "pointer";
+    th.style.userSelect = "none";
+    th.addEventListener("click", () => {
+      if (sortColIdx === ci) sortDesc = !sortDesc;
+      else { sortColIdx = ci; sortDesc = col.desc; }
+      renderRows();
+    });
+    headerRow.appendChild(th);
   });
-  html += `</tbody></table>`;
-  body.innerHTML = `<div class="table-scroll">${html}</div>`;
+
+  function renderRows() {
+    headerRow.querySelectorAll("th").forEach((th, ci) => {
+      th.textContent = cols[ci].label + (ci === sortColIdx ? (sortDesc ? " ▼" : " ▲") : "");
+    });
+
+    const sorted = [...normalized].sort((a, b) => {
+      const va = cols[sortColIdx].key(a);
+      const vb = cols[sortColIdx].key(b);
+      if (typeof va === "string") return sortDesc ? vb.localeCompare(va) : va.localeCompare(vb);
+      return sortDesc ? vb - va : va - vb;
+    });
+
+    tbody.innerHTML = "";
+    sorted.forEach(p => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="muted">${p.no}</td>
+        <td>${p.name || "—"}</td>
+        <td class="muted">${p.gp}</td>
+        <td>${p.fg}</td>
+        <td>${p.threes}</td>
+        <td>${p.ft}</td>
+        <td class="highlight">${p.total}</td>
+        <td>${p.avg ? Number(p.avg).toFixed(1) : "—"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  renderRows();
   return card;
 }
 
@@ -650,10 +705,11 @@ function buildLeadersCard(season) {
     free_throws: "Free Throws",
   };
 
-  // Collect all unique team names across all categories
-  const allTeams = [...new Set(
-    Object.values(leaders).flat().map(r => r["team"]).filter(Boolean)
-  )].sort();
+  // Collect all unique team names — use standings so teams with no leader entries still appear
+  const allTeams = [...new Set([
+    ...(season.standings || []).map(s => s.team),
+    ...Object.values(leaders).flat().map(r => r["team"]),
+  ])].filter(Boolean).sort();
 
   // Filter bar
   const filterBar = document.createElement("div");
