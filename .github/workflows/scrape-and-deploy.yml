@@ -29,7 +29,12 @@ jobs:
         env:
           NYURBAN_USERNAME: ${{ secrets.NYURBAN_USERNAME }}
           NYURBAN_PASSWORD: ${{ secrets.NYURBAN_PASSWORD }}
-        run: python scraper/scraper.py
+        run: |
+          python scraper/scraper.py
+          if [ ! -f web/data.json ]; then
+            echo "ERROR: data.json was not created — scraper likely failed to login."
+            exit 1
+          fi
 
       - name: Deploy to GitHub Pages
         run: |

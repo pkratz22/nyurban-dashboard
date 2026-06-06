@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 import json
 import re
 import os
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -28,12 +29,44 @@ PASSWORD = os.environ["NYURBAN_PASSWORD"]
 OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "../web/data.json")
 
 
+# ── HTTP helpers with retry + backoff ─────────────────────────────────────────
+
+def _request(session: requests.Session, method: str, url: str, **kwargs) -> requests.Response:
+    """
+    Wrapper around session.get/post that retries on 429 (Too Many Requests)
+    or transient 5xx errors using exponential backoff.
+    """
+    delays = [5, 15, 30, 60]  # seconds between attempts
+    for attempt, delay in enumerate(delays + [None], start=1):
+        resp = getattr(session, method)(url, **kwargs)
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", delay or 60))
+            print(f"  ⚠ 429 Too Many Requests — waiting {retry_after}s (attempt {attempt})")
+            time.sleep(retry_after)
+            continue
+        if resp.status_code >= 500 and delay is not None:
+            print(f"  ⚠ {resp.status_code} server error — waiting {delay}s (attempt {attempt})")
+            time.sleep(delay)
+            continue
+        return resp
+    # Final attempt after all delays exhausted
+    return getattr(session, method)(url, **kwargs)
+
+
+def get(session: requests.Session, url: str, **kwargs) -> requests.Response:
+    return _request(session, "get", url, **kwargs)
+
+
+def post(session: requests.Session, url: str, **kwargs) -> requests.Response:
+    return _request(session, "post", url, **kwargs)
+
+
 # ── Step 1: Login ─────────────────────────────────────────────────────────────
 
 def login(session: requests.Session) -> bool:
     print("Step 1: Logging in...")
-    resp = session.post(
-        LOGIN_URL,
+    resp = post(
+        session, LOGIN_URL,
         data={"ny_username": USERNAME, "ny_password": PASSWORD, "submit": "login"},
         allow_redirects=True,
     )
@@ -48,7 +81,7 @@ def login(session: requests.Session) -> bool:
 
 def get_team_links(session: requests.Session) -> list[dict]:
     print("Step 2: Fetching team list...")
-    resp = session.get(TEAM_LIST_URL)
+    resp = get(session, TEAM_LIST_URL)
     soup = BeautifulSoup(resp.text, "html.parser")
     teams = []
     seen_ids = set()
@@ -423,7 +456,7 @@ def infer_season_label(schedule: list) -> str:
 
 def scrape_team(session: requests.Session, team: dict) -> dict:
     print(f"Step 3: Scraping '{team['name']}'...")
-    resp = session.get(team["url"])
+    resp = get(session, team["url"])
     soup = BeautifulSoup(resp.text, "html.parser")
     tables = soup.find_all("table")
 
