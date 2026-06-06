@@ -251,7 +251,7 @@ let activeSeasonIdx = 0;
 
 async function loadData() {
   try {
-    const resp = await fetch("data.json");
+    const resp = await fetch("data.json?v=" + Date.now());
     if (!resp.ok) throw new Error("data.json not found — run the scraper first.");
     allData = await resp.json();
   } catch (e) {
