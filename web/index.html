@@ -219,6 +219,38 @@
     }
     .leader-tab.active { color: #f6ad55; border-bottom-color: #f6ad55; }
 
+    /* ── Team filter chips ── */
+    .chip-bar {
+      padding: 10px 14px 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      border-bottom: 1px solid #1e2535;
+    }
+    .chip-label {
+      font-size: 0.72rem;
+      color: #718096;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin-right: 4px;
+    }
+    .chip {
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid #2d3748;
+      background: transparent;
+      color: #718096;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.12s;
+      white-space: nowrap;
+    }
+    .chip:hover { border-color: #4a5568; color: #cbd5e0; }
+    .chip.active { background: #2d3748; color: #f6ad55; border-color: #f6ad55; }
+    .chip.my-team.active { background: #1c4532; color: #68d391; border-color: #68d391; }
+    .chip-all { font-style: italic; }
+
     .empty-state {
       padding: 36px; text-align: center;
       color: #4a5568; font-size: 0.85rem;
@@ -705,33 +737,66 @@ function buildLeadersCard(season) {
     free_throws: "Free Throws",
   };
 
-  // Collect all unique team names — use standings so teams with no leader entries still appear
+  // All teams from standings + any that appear in leader rows
   const allTeams = [...new Set([
     ...(season.standings || []).map(s => s.team),
     ...Object.values(leaders).flat().map(r => r["team"]),
   ])].filter(Boolean).sort();
 
-  // Filter bar
-  const filterBar = document.createElement("div");
-  filterBar.style.cssText = "padding:10px 14px 0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;";
-  filterBar.innerHTML = `<span style="font-size:0.72rem;color:#718096;text-transform:uppercase;letter-spacing:.05em;">Filter by team</span>`;
+  // Selected teams set — default to just my team
+  const selected = new Set([season.team_name].filter(Boolean));
 
-  const select = document.createElement("select");
-  select.style.cssText = "background:#171c28;color:#e2e8f0;border:1px solid #2d3748;border-radius:6px;padding:4px 10px;font-size:0.8rem;cursor:pointer;";
-  select.innerHTML = `<option value="">All teams</option>` +
-    allTeams.map(t => `<option value="${t}"${t === season.team_name ? " selected" : ""}>${t}</option>`).join("");
-  filterBar.appendChild(select);
+  // ── Chip filter bar ──────────────────────────────────────────────────────
+  const chipBar = document.createElement("div");
+  chipBar.className = "chip-bar";
+  chipBar.innerHTML = `<span class="chip-label">Filter</span>`;
 
+  // "All" chip
+  const allChip = document.createElement("button");
+  allChip.className = "chip chip-all";
+  allChip.textContent = "All teams";
+  allChip.onclick = () => {
+    selected.clear();
+    updateChips();
+    renderPanels();
+  };
+  chipBar.appendChild(allChip);
+
+  // Per-team chips
+  const teamChips = {};
+  allTeams.forEach(team => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (team === season.team_name ? " my-team" : "");
+    chip.textContent = team;
+    chip.onclick = () => {
+      if (selected.has(team)) selected.delete(team);
+      else selected.add(team);
+      updateChips();
+      renderPanels();
+    };
+    teamChips[team] = chip;
+    chipBar.appendChild(chip);
+  });
+
+  function updateChips() {
+    const isAll = selected.size === 0;
+    allChip.classList.toggle("active", isAll);
+    allTeams.forEach(t => {
+      teamChips[t].classList.toggle("active", selected.has(t));
+    });
+  }
+  updateChips();
+
+  // ── Category tabs ────────────────────────────────────────────────────────
   const tabsDiv = document.createElement("div");
   tabsDiv.className = "leaders-tabs";
   const contentDiv = document.createElement("div");
 
-  // Build panels, storing rows for live filtering
   const panels = {};
   let first = true;
   Object.entries(categories).forEach(([key, label]) => {
     if (!leaders[key] || !leaders[key].length) return;
-    const panelId = `leader-panel-${key}-${Math.random().toString(36).slice(2)}`;
+    const panelId = `lp-${key}-${Math.random().toString(36).slice(2)}`;
 
     const tab = document.createElement("button");
     tab.className = "leader-tab" + (first ? " active" : "");
@@ -754,13 +819,18 @@ function buildLeadersCard(season) {
     first = false;
   });
 
-  function renderPanels(filterTeam) {
-    Object.entries(panels).forEach(([key, { panel, rows }]) => {
-      const filtered = filterTeam ? rows.filter(r => r["team"] === filterTeam) : rows;
+  // ── Render table rows based on selected chips ────────────────────────────
+  function renderPanels() {
+    Object.entries(panels).forEach(([, { panel, rows }]) => {
+      const filtered = selected.size === 0
+        ? rows
+        : rows.filter(r => selected.has(r["team"]));
+
       const keys = [...new Set(rows.flatMap(r => Object.keys(r)))];
       let html = `<table><thead><tr>${keys.map(k => `<th>${k}</th>`).join("")}</tr></thead><tbody>`;
+
       if (!filtered.length) {
-        html += `<tr><td colspan="${keys.length}" style="padding:20px;text-align:center;color:#4a5568">No entries for this team</td></tr>`;
+        html += `<tr><td colspan="${keys.length}" style="padding:20px;text-align:center;color:#4a5568">No entries for selected team(s)</td></tr>`;
       } else {
         filtered.forEach(row => {
           const isMyTeam = row["team"] === season.team_name;
@@ -776,10 +846,9 @@ function buildLeadersCard(season) {
     });
   }
 
-  select.onchange = () => renderPanels(select.value);
-  renderPanels(season.team_name); // default: show only my team
+  renderPanels();
 
-  body.appendChild(filterBar);
+  body.appendChild(chipBar);
   body.appendChild(tabsDiv);
   body.appendChild(contentDiv);
   return card;
