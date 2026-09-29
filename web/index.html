@@ -301,6 +301,35 @@ async function loadData() {
   selectTeam(0);
 }
 
+function extractSeasonOrder(label) {
+  const match = String(label || "").match(/(Fall|Winter|Spring|Summer)/i);
+  if (!match) return 0;
+  const order = { Fall: 4, Summer: 3, Spring: 2, Winter: 1 };
+  return order[match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase()] || 0;
+}
+
+function parseSeasonYear(label) {
+  const match = String(label || "").match(/(\d{4})/);
+  return match ? Number(match[1]) : 0;
+}
+
+function sortSeasonsNewestFirst(team) {
+  const seasons = Array.isArray(team?.seasons) ? [...team.seasons] : [];
+  seasons.sort((a, b) => {
+    const aYear = parseSeasonYear(a?.season_label || "");
+    const bYear = parseSeasonYear(b?.season_label || "");
+    if (bYear !== aYear) return bYear - aYear;
+    return extractSeasonOrder(b?.season_label || "") - extractSeasonOrder(a?.season_label || "");
+  });
+  team.seasons = seasons;
+}
+
+function getPreferredSeasonIndex(team) {
+  if (!Array.isArray(team?.seasons) || team.seasons.length === 0) return 0;
+  sortSeasonsNewestFirst(team);
+  return 0;
+}
+
 function buildTeamTabs() {
   const tabs = document.getElementById("team-tabs");
   tabs.innerHTML = "";
@@ -315,19 +344,33 @@ function buildTeamTabs() {
 
 function selectTeam(idx) {
   activeTeamIdx = idx;
-  activeSeasonIdx = 0;
+  const team = allData.teams[idx];
+  if (team) {
+    sortSeasonsNewestFirst(team);
+    activeSeasonIdx = getPreferredSeasonIndex(team);
+  } else {
+    activeSeasonIdx = 0;
+  }
   document.querySelectorAll(".tab-btn").forEach((b, i) => b.classList.toggle("active", i === idx));
   buildSeasonTabs(idx);
-  renderSeason(idx, 0);
+  renderSeason(idx, activeSeasonIdx);
 }
 
 function buildSeasonTabs(teamIdx) {
   const team = allData.teams[teamIdx];
   const tabs = document.getElementById("season-tabs");
   tabs.innerHTML = "";
-  (team.seasons || []).forEach((season, i) => {
+  const seasons = Array.isArray(team?.seasons) ? [...team.seasons] : [];
+  seasons.sort((a, b) => {
+    const aYear = parseSeasonYear(a?.season_label || "");
+    const bYear = parseSeasonYear(b?.season_label || "");
+    if (bYear !== aYear) return bYear - aYear;
+    return extractSeasonOrder(b?.season_label || "") - extractSeasonOrder(a?.season_label || "");
+  });
+  team.seasons = seasons;
+  seasons.forEach((season, i) => {
     const btn = document.createElement("button");
-    btn.className = "season-btn" + (i === 0 ? " active" : "");
+    btn.className = "season-btn" + (i === activeSeasonIdx ? " active" : "");
     const record = season.record ? season.record.wins + "-" + season.record.losses : "";
     btn.textContent = season.season_label + (record ? "  " + record : "");
     btn.onclick = () => {
