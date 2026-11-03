@@ -28,6 +28,6 @@ Then open http://localhost:8080 in your browser.
 ## What it scrapes
 - Team name, division, record
 - Game schedule & results
-- Player scoring stats
+- Player scoring stats (names are stripped from published data)
 - Division standings
 - Division leaders

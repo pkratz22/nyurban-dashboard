@@ -14,7 +14,6 @@ from bs4 import BeautifulSoup
 import json
 import re
 import os
-import sqlite3
 import time
 from datetime import datetime
 from dotenv import load_dotenv
@@ -29,7 +28,6 @@ USERNAME = os.environ["NYURBAN_USERNAME"]
 PASSWORD = os.environ["NYURBAN_PASSWORD"]
 
 OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "../web/data.json")
-DATABASE_FILE = os.path.join(os.path.dirname(__file__), "nyurban_stats.sqlite3")
 
 
 # ── HTTP helpers with retry + backoff ─────────────────────────────────────────
@@ -490,204 +488,6 @@ def parse_division_leaders(tables: list) -> dict:
     return leaders
 
 
-def _player_name(player: dict) -> str:
-    name = str(player.get("name") or player.get("player") or "").strip()
-    if name:
-        return name
-    jersey_number = str(player.get("no.") or player.get("no") or "").strip()
-    return f"#{jersey_number}" if jersey_number else ""
-
-
-def _stat_number(player: dict, *keys: str):
-    for key in keys:
-        value = player.get(key)
-        if isinstance(value, (int, float)):
-            return value
-        if value is not None:
-            try:
-                return float(str(value).replace(",", ""))
-            except ValueError:
-                continue
-    return None
-
-
-def _snapshot_date(recorded_at: str) -> str:
-    try:
-        return datetime.fromisoformat(recorded_at).date().isoformat()
-    except ValueError:
-        return datetime.now().date().isoformat()
-
-
-def _store_game_player(connection, team_id: str, season_label: str, game: dict,
-                       player: dict, recorded_at: str) -> bool:
-    name = _player_name(player)
-    if not name:
-        return False
-    connection.execute("""
-        INSERT INTO player_game_stats (
-            team_id, season_label, game_date, opponent, gym, player_name,
-            points, field_goals, three_pointers, free_throws, stats_json, recorded_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (team_id, season_label, game_date, opponent, gym, player_name)
-        DO UPDATE SET points = excluded.points,
-            field_goals = excluded.field_goals,
-            three_pointers = excluded.three_pointers,
-            free_throws = excluded.free_throws,
-            stats_json = excluded.stats_json,
-            recorded_at = excluded.recorded_at
-    """, (
-        team_id, season_label, str(game.get("date", "")),
-        str(game.get("opponent", "")), str(game.get("gym", "")), name,
-        _stat_number(player, "total", "tot."),
-        _stat_number(player, "fg"),
-        _stat_number(player, "3pts", "3pt"),
-        _stat_number(player, "ft"),
-        json.dumps(player, sort_keys=True), recorded_at,
-    ))
-    return True
-
-
-def _store_season_snapshot(connection, team_id: str, season_label: str,
-                            snapshot_date: str, player: dict,
-                            recorded_at: str) -> bool:
-    name = _player_name(player)
-    if not name:
-        return False
-    connection.execute("""
-        INSERT INTO player_season_snapshots (
-            team_id, season_label, snapshot_date, player_name,
-            total_points, games_played, scoring_average,
-            three_pointers, free_throws, stats_json, recorded_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (team_id, season_label, snapshot_date, player_name)
-        DO UPDATE SET total_points = excluded.total_points,
-            games_played = excluded.games_played,
-            scoring_average = excluded.scoring_average,
-            three_pointers = excluded.three_pointers,
-            free_throws = excluded.free_throws,
-            stats_json = excluded.stats_json,
-            recorded_at = excluded.recorded_at
-    """, (
-        team_id, season_label, snapshot_date, name,
-        _stat_number(player, "tot.", "total"),
-        _stat_number(player, "gp"),
-        _stat_number(player, "avg.", "avg"),
-        _stat_number(player, "3pts", "3pt"),
-        _stat_number(player, "ft"),
-        json.dumps(player, sort_keys=True), recorded_at,
-    ))
-    return True
-
-
-def _store_division_leader(connection, season: dict, snapshot_date: str,
-                           category: str, leader: dict, recorded_at: str) -> bool:
-    team_name = str(leader.get("team", "")).strip()
-    jersey_number = str(leader.get("no.") or leader.get("no") or "").strip()
-    if not team_name or not jersey_number:
-        return False
-    connection.execute("""
-        INSERT INTO division_leader_snapshots (
-            division, season_label, snapshot_date, category, team_name,
-            jersey_number, metric_value, games_played, stats_json, recorded_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (division, season_label, snapshot_date, category, team_name, jersey_number)
-        DO UPDATE SET metric_value = excluded.metric_value,
-            games_played = excluded.games_played,
-            stats_json = excluded.stats_json,
-            recorded_at = excluded.recorded_at
-    """, (
-        str(season.get("division", "")), str(season.get("season_label", "")),
-        snapshot_date, category, team_name, jersey_number,
-        _stat_number(leader, "total", "avg", "3 pts", "3pts", "ft"),
-        _stat_number(leader, "gp"),
-        json.dumps(leader, sort_keys=True), recorded_at,
-    ))
-    return True
-
-
-def persist_player_history(seasons: list[dict]) -> tuple[int, int, int]:
-    """Store observed box scores and daily season-stat snapshots in SQLite."""
-    os.makedirs(os.path.dirname(os.path.abspath(DATABASE_FILE)), exist_ok=True)
-    connection = sqlite3.connect(DATABASE_FILE)
-    game_rows = 0
-    snapshot_rows = 0
-    leader_rows = 0
-    try:
-        with connection:
-            connection.executescript("""
-                CREATE TABLE IF NOT EXISTS player_game_stats (
-                    team_id TEXT NOT NULL,
-                    season_label TEXT NOT NULL,
-                    game_date TEXT NOT NULL,
-                    opponent TEXT NOT NULL,
-                    gym TEXT NOT NULL,
-                    player_name TEXT NOT NULL,
-                    points REAL,
-                    field_goals REAL,
-                    three_pointers REAL,
-                    free_throws REAL,
-                    stats_json TEXT NOT NULL,
-                    recorded_at TEXT NOT NULL,
-                    PRIMARY KEY (team_id, season_label, game_date, opponent, gym, player_name)
-                );
-                CREATE TABLE IF NOT EXISTS player_season_snapshots (
-                    team_id TEXT NOT NULL,
-                    season_label TEXT NOT NULL,
-                    snapshot_date TEXT NOT NULL,
-                    player_name TEXT NOT NULL,
-                    total_points REAL,
-                    games_played REAL,
-                    scoring_average REAL,
-                    three_pointers REAL,
-                    free_throws REAL,
-                    stats_json TEXT NOT NULL,
-                    recorded_at TEXT NOT NULL,
-                    PRIMARY KEY (team_id, season_label, snapshot_date, player_name)
-                );
-                CREATE INDEX IF NOT EXISTS player_snapshot_history
-                    ON player_season_snapshots (team_id, season_label, player_name, snapshot_date);
-                CREATE TABLE IF NOT EXISTS division_leader_snapshots (
-                    division TEXT NOT NULL,
-                    season_label TEXT NOT NULL,
-                    snapshot_date TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    team_name TEXT NOT NULL,
-                    jersey_number TEXT NOT NULL,
-                    metric_value REAL,
-                    games_played REAL,
-                    stats_json TEXT NOT NULL,
-                    recorded_at TEXT NOT NULL,
-                    PRIMARY KEY (division, season_label, snapshot_date, category, team_name, jersey_number)
-                );
-                CREATE INDEX IF NOT EXISTS division_leader_history
-                    ON division_leader_snapshots (division, season_label, category, team_name, jersey_number, snapshot_date);
-            """)
-            for season in seasons:
-                team_id = str(season.get("team_id", ""))
-                season_label = str(season.get("season_label", ""))
-                recorded_at = season.get("scraped_at") or datetime.now().isoformat()
-                snapshot_date = _snapshot_date(recorded_at)
-
-                for game in season.get("box_scores", []):
-                    for player in game.get("players", []):
-                        game_rows += _store_game_player(
-                            connection, team_id, season_label, game, player, recorded_at
-                        )
-
-                for player in season.get("season_totals", []):
-                    snapshot_rows += _store_season_snapshot(
-                        connection, team_id, season_label, snapshot_date, player, recorded_at
-                    )
-
-                for category, leaders in season.get("division_leaders", {}).items():
-                    for leader in leaders:
-                        leader_rows += _store_division_leader(
-                            connection, season, snapshot_date, category, leader, recorded_at
-                        )
-    finally:
-        connection.close()
-    return game_rows, snapshot_rows, leader_rows
-
 
 # ── Main scrape function ───────────────────────────────────────────────────────
 
@@ -822,6 +622,22 @@ def scrape_team(session: requests.Session, team: dict) -> dict:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+PRIVATE_KEYS = {"name", "player", "player_name"}
+
+
+def anonymize_output(value):
+    """Recursively strip player-name fields so published data.json has no names.
+
+    Jersey numbers remain so rows can still be told apart.
+    """
+    if isinstance(value, dict):
+        return {k: anonymize_output(v) for k, v in value.items()
+                if k.lower() not in PRIVATE_KEYS}
+    if isinstance(value, list):
+        return [anonymize_output(v) for v in value]
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser(description="Scrape NYUrban stats and write JSON for a season or all seasons.")
     parser.add_argument("--season", default=os.environ.get("NYURBAN_SEASON"), help="Only include seasons matching this label, e.g. 'Fall 2026'.")
@@ -886,8 +702,7 @@ def main():
         "scraped_at": datetime.now().isoformat(),
     }
 
-    game_rows, snapshot_rows, leader_rows = persist_player_history(all_season_data)
-    print(f"  ✓ History saved: {game_rows} game-player rows, {snapshot_rows} daily player snapshots, {leader_rows} division leader rows")
+    output = anonymize_output(output)
 
     os.makedirs(os.path.dirname(os.path.abspath(OUTPUT_FILE)), exist_ok=True)
     with open(OUTPUT_FILE, "w") as f:

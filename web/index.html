@@ -686,7 +686,6 @@ function buildPlayerStatsCard(season) {
 
   const normalized = players.map(p => ({
     no: p["no."] || p["no"] || "",
-    name: p["name"] || "",
     gp: p["gp"] || 0,
     fg: p["fg"] || 0,
     threes: p["3pts"] || p["3pt"] || 0,
@@ -697,7 +696,6 @@ function buildPlayerStatsCard(season) {
 
   const cols = [
     { label: "#",   key: p => p.no,     desc: false },
-    { label: "Name",key: p => p.name,   desc: false },
     { label: "GP",  key: p => p.gp,     desc: true  },
     { label: "FG",  key: p => p.fg,     desc: true  },
     { label: "3PT", key: p => p.threes, desc: true  },
@@ -752,7 +750,6 @@ function buildPlayerStatsCard(season) {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="muted">${p.no}</td>
-        <td>${p.name || "—"}</td>
         <td class="muted">${p.gp}</td>
         <td>${p.fg}</td>
         <td>${p.threes}</td>
@@ -930,11 +927,10 @@ function buildBoxScoresCard(season) {
 
     const players = (game.players || []).filter(p => p["no."] !== "Team");
     if (players.length) {
-      let tbl = `<table><thead><tr><th>#</th><th>Name</th><th>FG</th><th>3PT</th><th>FT</th><th>PTS</th></tr></thead><tbody>`;
+      let tbl = `<table><thead><tr><th>#</th><th>FG</th><th>3PT</th><th>FT</th><th>PTS</th></tr></thead><tbody>`;
       players.forEach(p => {
         tbl += `<tr>
           <td class="muted">${p["no."] || ""}</td>
-          <td>${p["name"] || "—"}</td>
           <td>${p["fg"] ?? ""}</td>
           <td>${p["3pts"] ?? ""}</td>
           <td>${p["ft"] ?? ""}</td>
@@ -967,7 +963,7 @@ function aggregateFromBoxScores(boxScores) {
     (game.players || []).forEach(p => {
       const key = p["no."] || "?";
       if (key === "Team" || !key) return;
-      if (!totals[key]) totals[key] = { "no.": key, name: p["name"] || "", gp: 0, fg: 0, "3pts": 0, ft: 0, "tot.": 0 };
+      if (!totals[key]) totals[key] = { "no.": key, gp: 0, fg: 0, "3pts": 0, ft: 0, "tot.": 0 };
       totals[key].gp++;
       totals[key].fg += (p["fg"] || 0);
       totals[key]["3pts"] += (p["3pts"] || 0);
