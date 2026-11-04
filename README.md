@@ -9,6 +9,14 @@ cd scraper
 pip install -r requirements.txt
 ```
 
+## Tests
+
+After installing the scraper dependencies, run the offline unit tests from the repository root:
+
+```bash
+python3 -m unittest discover -s scraper/tests -v
+```
+
 ## Run
 
 **Step 1 — Scrape the data:**

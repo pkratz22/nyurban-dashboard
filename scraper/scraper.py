@@ -8,6 +8,8 @@ Logs in via the site's custom form, finds all team pages, and scrapes:
   - Division scoring leaders
 """
 
+from __future__ import annotations
+
 import argparse
 import requests
 from bs4 import BeautifulSoup
@@ -28,6 +30,7 @@ USERNAME = os.environ["NYURBAN_USERNAME"]
 PASSWORD = os.environ["NYURBAN_PASSWORD"]
 
 OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "../web/data.json")
+HTML_PARSER = "html.parser"
 
 
 # ── HTTP helpers with retry + backoff ─────────────────────────────────────────
@@ -94,46 +97,60 @@ def _normalize_site_season_label(raw: str) -> str:
     return crop
 
 
-def get_team_links(session: requests.Session) -> list[dict]:
-    print("Step 2: Fetching team list...")
-    resp = get(session, TEAM_LIST_URL)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    season_by_team_id = {}
-
-    # The team list page itself does not expose the season label. The authoritative
-    # metadata lives in each team-detail page's "my_team_for_image" dropdown,
-    # which contains entries like "Euknicks (Fall Basketball 2026)".
+def _extract_team_urls(soup) -> list[dict]:
     team_urls = []
     seen_ids = set()
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "team-details" in href and "team_id=" in href:
-            m = re.search(r"team_id=(\d+)", href)
-            if m:
-                tid = m.group(1)
-                if tid not in seen_ids:
-                    seen_ids.add(tid)
-                    name = a.get_text(strip=True)
-                    team_urls.append({
-                        "name": name,
-                        "url": href,
-                        "team_id": tid,
-                    })
+        if "team-details" not in href or "team_id=" not in href:
+            continue
+        match = re.search(r"team_id=(\d+)", href)
+        if not match:
+            continue
+        team_id = match.group(1)
+        if team_id in seen_ids:
+            continue
+        seen_ids.add(team_id)
+        team_urls.append({
+            "name": a.get_text(strip=True),
+            "url": href,
+            "team_id": team_id,
+        })
+    return team_urls
 
+
+def _season_label_from_option(option) -> tuple[str, str]:
+    team_id = str(option.get("value", "")).strip()
+    label = option.get_text(" ", strip=True)
+    if not team_id or not label:
+        return "", ""
+    match = re.search(r"\(([^()]+)\)$", label)
+    if not match:
+        return "", ""
+    return team_id, _normalize_site_season_label(match.group(1))
+
+
+def _get_season_labels(session: requests.Session, team_urls: list[dict]) -> dict[str, str]:
+    season_by_team_id = {}
     for team in team_urls:
         detail_resp = get(session, team["url"])
-        detail_soup = BeautifulSoup(detail_resp.text, "html.parser")
-        for option in detail_soup.select("select#my_team_for_image option, select[name='my_team_for_image'] option"):
-            team_id = str(option.get("value", "")).strip()
-            label = option.get_text(" ", strip=True)
-            if not team_id or not label:
-                continue
-            match = re.search(r"\(([^()]+)\)$", label)
-            if not match:
-                continue
-            season_label = _normalize_site_season_label(match.group(1))
-            if season_label:
+        detail_soup = BeautifulSoup(detail_resp.text, HTML_PARSER)
+        options = detail_soup.select(
+            "select#my_team_for_image option, select[name='my_team_for_image'] option"
+        )
+        for option in options:
+            team_id, season_label = _season_label_from_option(option)
+            if team_id and season_label:
                 season_by_team_id[team_id] = season_label
+    return season_by_team_id
+
+
+def get_team_links(session: requests.Session) -> list[dict]:
+    print("Step 2: Fetching team list...")
+    resp = get(session, TEAM_LIST_URL)
+    soup = BeautifulSoup(resp.text, HTML_PARSER)
+    team_urls = _extract_team_urls(soup)
+    season_by_team_id = _get_season_labels(session, team_urls)
 
     teams = []
     for team in team_urls:
@@ -150,137 +167,142 @@ def get_team_links(session: requests.Session) -> list[dict]:
 
 # ── Step 3: Parse standings from table 0 ──────────────────────────────────────
 
+def _standings_child_name(content) -> tuple[str, bool]:
+    if hasattr(content, "get_text"):
+        text = content.get_text(strip=True)
+        if not text or text == "arrow":
+            return "", False
+        if content.name == "div":
+            return "", True
+        return text, False
+    text = str(content).strip()
+    return text, bool(text)
+
+
+def _standings_team_name(name_cell) -> str:
+    name = ""
+    for content in name_cell.children:
+        candidate, should_stop = _standings_child_name(content)
+        if candidate:
+            name = candidate
+        if should_stop:
+            break
+    if not name:
+        name = name_cell.get_text(" ", strip=True).split("arrow")[0].strip()
+    return name
+
+
+def _parse_standings_game(row) -> dict | None:
+    cells = [cell.get_text(strip=True) for cell in row.find_all("td")]
+    if len(cells) < 2:
+        return None
+    match = re.match(r"([WL])\s*(\d+)-(\d+)", cells[1])
+    if not match:
+        return None
+    outcome, score_a, score_b = match.group(1), int(match.group(2)), int(match.group(3))
+    pts_for, pts_against = (score_a, score_b) if outcome == "W" else (score_b, score_a)
+    return {
+        "opponent": cells[0],
+        "outcome": outcome,
+        "pts_for": pts_for,
+        "pts_against": pts_against,
+    }
+
+
+def _standings_games(name_cell, regular_season_gp: int) -> list[dict]:
+    nested = name_cell.find("table")
+    if not nested:
+        return []
+    games = []
+    for row in nested.find_all("tr")[1:]:
+        game = _parse_standings_game(row)
+        if game:
+            games.append(game)
+    return games[:regular_season_gp]
+
+
+def _parse_standings_row(row) -> dict | None:
+    cells = row.find_all("td", recursive=False)
+    if len(cells) < 4:
+        return None
+    try:
+        wins = int(cells[2].get_text(strip=True))
+        losses = int(cells[3].get_text(strip=True))
+    except ValueError:
+        return None
+    return {
+        "team": _standings_team_name(cells[1]),
+        "wins": wins,
+        "losses": losses,
+        "pct": cells[4].get_text(strip=True) if len(cells) > 4 else "",
+        "games": _standings_games(cells[1], wins + losses),
+    }
+
+
 def parse_standings(table) -> list[dict]:
     standings = []
-    rows = table.find_all("tr", recursive=False)
-    for row in rows[1:]:  # skip header
-        cells = row.find_all("td", recursive=False)
-        if len(cells) < 4:
-            continue
-        name_cell = cells[1]
-        name = ""
-        for content in name_cell.children:
-            if hasattr(content, "get_text"):
-                text = content.get_text(strip=True)
-                if text and text != "arrow":
-                    if content.name == "div":
-                        break
-                    name = text
-            else:
-                text = str(content).strip()
-                if text:
-                    name = text
-                    break
-
-        if not name:
-            full = name_cell.get_text(" ", strip=True)
-            name = full.split("arrow")[0].strip()
-
-        wins_text = cells[2].get_text(strip=True)
-        losses_text = cells[3].get_text(strip=True)
-        pct_text = cells[4].get_text(strip=True) if len(cells) > 4 else ""
-
-        try:
-            wins = int(wins_text)
-            losses = int(losses_text)
-        except ValueError:
-            continue
-
-        # Extract per-game results from the nested popup table
-        # The popup includes playoff games, but standings W/L is regular season only.
-        # Cap to wins+losses to keep only regular season games.
-        games = []
-        nested = name_cell.find("table")
-        if nested:
-            for gr in nested.find_all("tr")[1:]:
-                gcells = [td.get_text(strip=True) for td in gr.find_all("td")]
-                if len(gcells) >= 2:
-                    opp = gcells[0]
-                    result = gcells[1]
-                    m = re.match(r"([WL])\s*(\d+)-(\d+)", result)
-                    if m:
-                        outcome = m.group(1)
-                        score_a, score_b = int(m.group(2)), int(m.group(3))
-                        if outcome == "W":
-                            pts_for, pts_against = score_a, score_b
-                        else:
-                            pts_for, pts_against = score_b, score_a
-                        games.append({
-                            "opponent": opp,
-                            "outcome": outcome,
-                            "pts_for": pts_for,
-                            "pts_against": pts_against,
-                        })
-        # Trim to regular season only (wins + losses from standings row)
-        regular_season_gp = wins + losses
-        games = games[:regular_season_gp]
-
-        standings.append({
-            "team": name,
-            "wins": wins,
-            "losses": losses,
-            "pct": pct_text,
-            "games": games,
-        })
+    for row in table.find_all("tr", recursive=False)[1:]:
+        entry = _parse_standings_row(row)
+        if entry:
+            standings.append(entry)
     return standings
 
 
-def enrich_standings(standings: list[dict]) -> list[dict]:
-    """
-    Add PPG, Opp PPG, Point Diff, SOS, and SRS to each standings entry.
+def _set_scoring_averages(standing: dict) -> None:
+    games = standing.get("games", [])
+    if not games:
+        standing.update({
+            "ppg": None, "opp_ppg": None, "pt_diff": None, "sos": None, "srs": None,
+        })
+        return
+    points_for = sum(game["pts_for"] for game in games)
+    points_against = sum(game["pts_against"] for game in games)
+    standing["ppg"] = round(points_for / len(games), 1)
+    standing["opp_ppg"] = round(points_against / len(games), 1)
+    standing["pt_diff"] = round((points_for - points_against) / len(games), 1)
 
-    SRS (Simple Rating System) matches Basketball Reference's methodology:
-      - SRS = Point Differential + SOS  (both in points per game)
-      - SOS = average SRS of opponents faced
-      - Solved iteratively until convergence (~20 passes)
 
-    SOS reported is the converged average-opponent-SRS value.
-    """
-    # Build a name → entry map for quick lookup
-    by_name = {s["team"]: s for s in standings}
-
-    # Compute PPG / OppPPG / pt_diff first
-    for s in standings:
-        games = s.get("games", [])
-        gp = len(games)
-        if gp == 0:
-            s.update({"ppg": None, "opp_ppg": None, "pt_diff": None,
-                       "sos": None, "srs": None})
+def _srs_iteration(standings: list[dict], current_srs: dict[str, float]) -> dict[str, float]:
+    updated_srs = {}
+    for standing in standings:
+        games = standing.get("games", [])
+        if not games:
+            updated_srs[standing["team"]] = 0.0
             continue
-        pts_for     = sum(g["pts_for"]     for g in games)
-        pts_against = sum(g["pts_against"] for g in games)
-        s["ppg"]     = round(pts_for     / gp, 1)
-        s["opp_ppg"] = round(pts_against / gp, 1)
-        s["pt_diff"] = round((pts_for - pts_against) / gp, 1)
+        opponents_srs = sum(
+            current_srs.get(game["opponent"], 0.0) for game in games
+        ) / len(games)
+        updated_srs[standing["team"]] = (standing["pt_diff"] or 0.0) + opponents_srs
+    return updated_srs
 
-    # Iterative SRS solve
-    # Seed: SRS = pt_diff
-    srs = {s["team"]: (s["pt_diff"] or 0.0) for s in standings}
 
-    for _ in range(50):  # converges well within 20 iterations
-        new_srs = {}
-        for s in standings:
-            games = s.get("games", [])
-            if not games:
-                new_srs[s["team"]] = 0.0
-                continue
-            opp_srs_avg = sum(srs.get(g["opponent"], 0.0) for g in games) / len(games)
-            new_srs[s["team"]] = (s["pt_diff"] or 0.0) + opp_srs_avg
-        # Check convergence
-        if all(abs(new_srs[t] - srs[t]) < 0.001 for t in srs):
-            srs = new_srs
+def _solve_srs(standings: list[dict]) -> dict[str, float]:
+    srs = {standing["team"]: (standing["pt_diff"] or 0.0) for standing in standings}
+    for _ in range(50):
+        updated_srs = _srs_iteration(standings, srs)
+        converged = all(abs(updated_srs[team] - srs[team]) < 0.001 for team in srs)
+        srs = updated_srs
+        if converged:
             break
-        srs = new_srs
+    return srs
 
-    # Write back SOS (= SRS - pt_diff) and SRS
-    for s in standings:
-        if s["pt_diff"] is None:
-            s["sos"] = None
-            s["srs"] = None
-        else:
-            s["srs"] = round(srs[s["team"]], 1)
-            s["sos"] = round(srs[s["team"]] - s["pt_diff"], 1)
 
+def _set_strength_ratings(standings: list[dict], srs: dict[str, float]) -> None:
+    for standing in standings:
+        if standing["pt_diff"] is None:
+            standing["sos"] = None
+            standing["srs"] = None
+            continue
+        standing["srs"] = round(srs[standing["team"]], 1)
+        standing["sos"] = round(srs[standing["team"]] - standing["pt_diff"], 1)
+
+
+def enrich_standings(standings: list[dict]) -> list[dict]:
+    """Add scoring averages, point differential, SOS, and SRS to each entry."""
+    for standing in standings:
+        _set_scoring_averages(standing)
+    srs = _solve_srs(standings)
+    _set_strength_ratings(standings, srs)
     return standings
 
 
@@ -354,68 +376,65 @@ def parse_schedule_from_results_table(table) -> list[dict]:
     return schedule
 
 
+def _parse_boxscore_player_row(row, headers: list[str]) -> dict | None:
+    cells = [cell.get_text(strip=True) for cell in row.find_all("td")]
+    if len(cells) < 4:
+        return None
+    player = dict(zip(headers, cells))
+    _convert_player_stats(player, ("fg", "3pts", "ft", "total"), int)
+    return player
+
+
+def _parse_boxscore_players(box_row) -> list[dict]:
+    for nested_table in box_row.find_all("table"):
+        headers = [
+            header.get_text(strip=True).lower()
+            for header in nested_table.find_all("th")
+        ]
+        if "fg" not in headers or "total" not in headers:
+            continue
+        players = []
+        for row in nested_table.find_all("tr")[1:]:
+            player = _parse_boxscore_player_row(row, headers)
+            if player:
+                players.append(player)
+        return players
+    return []
+
+
+def _boxscore_game_info(row, result_lookup: dict) -> dict | None:
+    cells = row.find_all("td", recursive=False)
+    if len(cells) < 4 or cells[0].get_text(strip=True) != "+-":
+        return None
+    date, gym, opponent = [cell.get_text(strip=True) for cell in cells[1:4]]
+    result = result_lookup.get(opponent, {}).get("result", "")
+    return {
+        "date": date,
+        "gym": gym,
+        "opponent": opponent,
+        "result": result,
+        **parse_result(result),
+    }
+
+
 def parse_boxscores_from_combo_table(table, schedule: list) -> list[dict]:
-    """
-    Parse box scores from the combo table (table 12-style).
-    Alternating rows: game header (+-|date|gym|opponent) then box score row.
-    Merge with schedule to get results.
-    """
-    box_scores = []
-    # Build a lookup from opponent name to result
-    result_lookup = {g["opponent"]: g for g in schedule}
-
+    """Parse alternating game-header and box-score rows into per-game stats."""
     rows = table.find_all("tr", recursive=False)
-    i = 0
-    while i < len(rows):
-        cells = rows[i].find_all("td", recursive=False)
-        texts = [c.get_text(strip=True) for c in cells]
-
-        if len(cells) >= 4 and texts[0] == "+-":
-            date = texts[1]
-            gym = texts[2]
-            opponent = texts[3]
-
-            # Look up result from schedule
-            game_info = result_lookup.get(opponent, {})
-            result_raw = game_info.get("result", "")
-            parsed = parse_result(result_raw)
-
-            # Next row = box score
-            if i + 1 < len(rows):
-                box_row = rows[i + 1]
-                nested_tables = box_row.find_all("table")
-                players = []
-                for nt in nested_tables:
-                    nt_headers = [th.get_text(strip=True).lower() for th in nt.find_all("th")]
-                    if "fg" in nt_headers and "total" in nt_headers:
-                        for pr in nt.find_all("tr")[1:]:
-                            pcells = [td.get_text(strip=True) for td in pr.find_all("td")]
-                            if len(pcells) >= 4:
-                                player = dict(zip(nt_headers, pcells))
-                                for field in ["fg", "3pts", "ft", "total"]:
-                                    if field in player:
-                                        try:
-                                            player[field] = int(player[field])
-                                        except (ValueError, TypeError):
-                                            pass
-                                players.append(player)
-                        break
-
-                if players:
-                    box_scores.append({
-                        "date": date,
-                        "gym": gym,
-                        "opponent": opponent,
-                        "result": result_raw,
-                        **parsed,
-                        "players": players,
-                    })
-                i += 2
-            else:
-                i += 1
-        else:
-            i += 1
-
+    result_lookup = {game["opponent"]: game for game in schedule}
+    box_scores = []
+    row_index = 0
+    while row_index < len(rows):
+        game_info = _boxscore_game_info(rows[row_index], result_lookup)
+        if not game_info:
+            row_index += 1
+            continue
+        if row_index + 1 == len(rows):
+            row_index += 1
+            continue
+        players = _parse_boxscore_players(rows[row_index + 1])
+        if players:
+            box_scores.append({**game_info, "players": players})
+        row_index += 2
     return box_scores
 
 
@@ -467,25 +486,23 @@ def _convert_player_stats(player: dict, fields: tuple[str, ...], converter) -> N
 # ── Step 6: Parse division leaders ────────────────────────────────────────────
 
 def parse_division_leaders(tables: list) -> dict:
-    leaders = {}
-    category_names = ["total_points", "scoring_avg", "three_pointers", "free_throws"]
-    found = []
-    for table in tables:
-        headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-        if "rank" in headers and "team" in headers and "no." in headers:
-            rows = []
-            for row in table.find_all("tr")[1:]:
-                cells = [td.get_text(strip=True) for td in row.find_all("td")]
-                if cells and len(cells) >= 3:
-                    rows.append(dict(zip(headers, cells)))
-            if rows:
-                found.append({"headers": headers, "rows": rows})
+    category_names = ("total_points", "scoring_avg", "three_pointers", "free_throws")
+    leader_rows = [
+        rows for rows in (_division_leader_rows(table) for table in tables) if rows
+    ]
+    return dict(zip(category_names, leader_rows[:len(category_names)]))
 
-    for idx, lt in enumerate(found[:4]):
-        cat = category_names[idx] if idx < len(category_names) else f"category_{idx}"
-        leaders[cat] = lt["rows"]
 
-    return leaders
+def _division_leader_rows(table) -> list[dict]:
+    headers = [header.get_text(strip=True).lower() for header in table.find_all("th")]
+    if not {"rank", "team", "no."}.issubset(headers):
+        return []
+    rows = []
+    for row in table.find_all("tr")[1:]:
+        cells = [cell.get_text(strip=True) for cell in row.find_all("td")]
+        if len(cells) >= 3:
+            rows.append(dict(zip(headers, cells)))
+    return rows
 
 
 
@@ -511,7 +528,6 @@ def infer_season_label(schedule: list, fallback_year: int | None = None) -> str:
         m = re.search(r"(\d{2})/(\d{2})", date_str)
         if m:
             month = int(m.group(1))
-            day = int(m.group(2))
             year = year_hint
             if month > 12:
                 continue
@@ -535,44 +551,27 @@ def season_matches_filter(season_label: str, filter_label: str) -> bool:
     return False
 
 
-def scrape_team(session: requests.Session, team: dict) -> dict:
-    print(f"Step 3: Scraping '{team['name']}'...")
-    resp = get(session, team["url"])
-    soup = BeautifulSoup(resp.text, "html.parser")
-    tables = soup.find_all("table")
-
-    data = {
-        "team_name": team["name"],
-        "team_id": team["team_id"],
-        "team_url": team["url"],
-        "season_label": team.get("season_label", ""),
-        "division": "",
-        "record": {"wins": 0, "losses": 0},
-        "schedule": [],
-        "box_scores": [],
-        "season_totals": [],
-        "standings": [],
-        "division_leaders": {},
-        "scraped_at": datetime.now().isoformat(),
-    }
-
-    # Division name — look for "Division: X" in h1/h2 tags
+def _find_division(soup) -> str:
     for tag in soup.find_all(["h1", "h2", "h3", "p", "span", "div", "td"]):
         text = tag.get_text(strip=True)
         if re.match(r"^division:\s*\S", text, re.IGNORECASE) and len(text) < 60:
-            data["division"] = re.sub(r"^division:\s*", "", text, flags=re.IGNORECASE).strip()
+            return re.sub(r"^division:\s*", "", text, flags=re.IGNORECASE).strip()
+    return ""
+
+
+def _team_standings(tables: list, team_name: str) -> tuple[list[dict], dict]:
+    if not tables:
+        return [], {"wins": 0, "losses": 0}
+    standings = enrich_standings(parse_standings(tables[0]))
+    record = {"wins": 0, "losses": 0}
+    for entry in standings:
+        if entry["team"] == team_name:
+            record = {"wins": entry["wins"], "losses": entry["losses"]}
             break
+    return standings, record
 
-    # Standings (table 0)
-    if tables:
-        data["standings"] = enrich_standings(parse_standings(tables[0]))
-        for entry in data["standings"]:
-            if entry["team"] == team["name"]:
-                data["record"] = {"wins": entry["wins"], "losses": entry["losses"]}
-                break
 
-    # Schedule (table with Date | Location | Time | Opponent | Results, no <th> tags)
-    # Pick the largest matching table (regular season, not playoffs)
+def _find_schedule_table(tables: list):
     best_schedule_table = None
     best_row_count = 0
     for table in tables:
@@ -585,29 +584,48 @@ def scrape_team(session: requests.Session, team: dict) -> dict:
             if row_count > best_row_count:
                 best_row_count = row_count
                 best_schedule_table = table
-    if best_schedule_table:
-        data["schedule"] = parse_schedule_from_results_table(best_schedule_table)
+    return best_schedule_table
 
-    # Box scores (combo table with +- header rows)
+
+def _team_box_scores(tables: list, schedule: list) -> list[dict]:
     for table in tables:
-        ths = [th.get_text(strip=True) for th in table.find_all("th")]
-        if "Date" in ths and "Gym Location" in ths and "Opponent" in ths:
-            data["box_scores"] = parse_boxscores_from_combo_table(table, data["schedule"])
-            break
+        headers = {header.get_text(strip=True) for header in table.find_all("th")}
+        if {"Date", "Gym Location", "Opponent"}.issubset(headers):
+            return parse_boxscores_from_combo_table(table, schedule)
+    return []
 
-    # Season totals appear in the combo table after the per-game box scores.
+
+def _team_season_totals(tables: list) -> list[dict]:
     for table in tables:
-        data["season_totals"] = parse_season_totals(table)
-        if data["season_totals"]:
-            break
+        totals = parse_season_totals(table)
+        if totals:
+            return totals
+    return []
 
-    # Division leaders
-    data["division_leaders"] = parse_division_leaders(tables)
 
-    # Prefer the actual site season label when the team list exposes it.
-    # Otherwise fall back to the schedule-derived heuristic.
-    if not data["season_label"]:
-        data["season_label"] = infer_season_label(data["schedule"])
+def scrape_team(session: requests.Session, team: dict) -> dict:
+    print(f"Step 3: Scraping '{team['name']}'...")
+    resp = get(session, team["url"])
+    soup = BeautifulSoup(resp.text, HTML_PARSER)
+    tables = soup.find_all("table")
+    standings, record = _team_standings(tables, team["name"])
+    schedule_table = _find_schedule_table(tables)
+    schedule = parse_schedule_from_results_table(schedule_table) if schedule_table else []
+    season_label = team.get("season_label", "") or infer_season_label(schedule)
+    data = {
+        "team_name": team["name"],
+        "team_id": team["team_id"],
+        "team_url": team["url"],
+        "season_label": season_label,
+        "division": _find_division(soup),
+        "record": record,
+        "schedule": schedule,
+        "box_scores": _team_box_scores(tables, schedule),
+        "season_totals": _team_season_totals(tables),
+        "standings": standings,
+        "division_leaders": parse_division_leaders(tables),
+        "scraped_at": datetime.now().isoformat(),
+    }
 
     print(f"  ✓ Season: {data['season_label']}  Division: {data['division']}")
     print(f"  ✓ Record: {data['record']['wins']}-{data['record']['losses']}")
@@ -638,16 +656,65 @@ def anonymize_output(value):
     return value
 
 
-def main():
+def _parse_args():
     parser = argparse.ArgumentParser(description="Scrape NYUrban stats and write JSON for a season or all seasons.")
     parser.add_argument("--season", default=os.environ.get("NYURBAN_SEASON"), help="Only include seasons matching this label, e.g. 'Fall 2026'.")
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def _create_session() -> requests.Session:
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36"
     })
+    return session
 
+
+def _scrape_seasons(session: requests.Session, teams: list[dict], season_filter: str | None) -> list[dict]:
+    all_season_data = []
+    for team in teams:
+        team_data = scrape_team(session, team)
+        if season_filter and not season_matches_filter(
+            team_data.get("season_label", ""), season_filter
+        ):
+            continue
+        all_season_data.append(team_data)
+    return all_season_data
+
+
+def _disambiguate_season_labels(seasons: list[dict]) -> None:
+    label_counts = {}
+    for season in seasons:
+        label = season["season_label"]
+        label_counts[label] = label_counts.get(label, 0) + 1
+
+    label_seen = {}
+    for season in seasons:
+        label = season["season_label"]
+        if label_counts[label] <= 1:
+            continue
+        label_seen[label] = label_seen.get(label, 0) + 1
+        division = season.get("division", "")
+        season["season_label"] = (
+            f"{label} · {division}" if division else f"{label} ({label_seen[label]})"
+        )
+
+
+def _group_seasons_by_team(seasons: list[dict]) -> list[dict]:
+    grouped: dict[str, list] = {}
+    for season in seasons:
+        name = season["team_name"]
+        grouped.setdefault(name, []).append(season)
+    teams_output = []
+    for team_name, seasons in grouped.items():
+        _disambiguate_season_labels(seasons)
+        teams_output.append({"team_name": team_name, "seasons": seasons})
+    return teams_output
+
+
+def main():
+    args = _parse_args()
+    session = _create_session()
     if not login(session):
         print("Aborting — login failed.")
         return
@@ -657,53 +724,15 @@ def main():
         print("No teams found.")
         return
 
-    all_season_data = []
-    for team in teams:
-        team_data = scrape_team(session, team)
-        if args.season and not season_matches_filter(team_data.get("season_label", ""), args.season):
-            continue
-        all_season_data.append(team_data)
-
+    all_season_data = _scrape_seasons(session, teams, args.season)
     if args.season and not all_season_data:
         print(f"No seasons matched '{args.season}'.")
         return
 
-    # Group seasons by team name
-    grouped: dict[str, list] = {}
-    for season in all_season_data:
-        name = season["team_name"]
-        grouped.setdefault(name, []).append(season)
-
-    # Build output: one entry per team, with a list of seasons
-    teams_output = []
-    for team_name, seasons in grouped.items():
-        # Deduplicate season labels (e.g. two "Spring 2026" entries get suffixes)
-        label_counts: dict[str, int] = {}
-        for s in seasons:
-            lbl = s["season_label"]
-            label_counts[lbl] = label_counts.get(lbl, 0) + 1
-
-        label_seen: dict[str, int] = {}
-        for s in seasons:
-            lbl = s["season_label"]
-            if label_counts[lbl] > 1:
-                label_seen[lbl] = label_seen.get(lbl, 0) + 1
-                # Append division to disambiguate
-                div = s.get("division", "")
-                s["season_label"] = f"{lbl} · {div}" if div else f"{lbl} ({label_seen[lbl]})"
-
-        teams_output.append({
-            "team_name": team_name,
-            "seasons": seasons,
-        })
-
-    output = {
-        "teams": teams_output,
+    output = anonymize_output({
+        "teams": _group_seasons_by_team(all_season_data),
         "scraped_at": datetime.now().isoformat(),
-    }
-
-    output = anonymize_output(output)
-
+    })
     os.makedirs(os.path.dirname(os.path.abspath(OUTPUT_FILE)), exist_ok=True)
     with open(OUTPUT_FILE, "w") as f:
         json.dump(output, f, indent=2)
